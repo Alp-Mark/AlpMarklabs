@@ -1,9 +1,8 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-
 from backend.app.schemas.locale import _SUPPORTED_CURRENCIES
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class TenantCreateRequest(BaseModel):

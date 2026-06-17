@@ -19,7 +19,7 @@ from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture()
-def db() -> Generator[Session, None, None]:
+def db() -> Generator[Session]:
     """Get a direct database session for test setup."""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",

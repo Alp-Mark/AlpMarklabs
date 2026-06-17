@@ -4,20 +4,19 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Generator
-from datetime import UTC, date, datetime
+from datetime import date
 
 import jwt
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
-
 from backend.app.db.base import Base
 from backend.app.db.models import AuditEvent, Recommendation
 from backend.app.db.session import get_db
 from backend.app.main import app
 from backend.app.security import AUTH_JWT_ALGORITHM, AUTH_JWT_SECRET
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # ---------------------------------------------------------------------------
 # Fixtures

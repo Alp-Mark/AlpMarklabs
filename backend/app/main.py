@@ -5798,7 +5798,7 @@ def list_email_deliveries(
     limit: int = 100,
     alert_id: str | None = None,
     user_id: UUID | None = None,
-    delivery_status: str | None = None,
+    status_filter: str | None = Query(None, alias="status"),  # noqa: B008
     date_from: datetime | None = None,
     date_to: datetime | None = None,
 ) -> EmailDeliveryListResponse:
@@ -5809,7 +5809,7 @@ def list_email_deliveries(
     - limit: Maximum records to return (default: 100, max: 500)
     - alert_id: Filter by alert_id (exact match)
     - user_id: Filter by user_id (UUID string)
-    - delivery_status: Filter by status (pending, sent, failed, bounced)
+    - status: Filter by status (pending, sent, failed, bounced)
     - date_from: Filter records >= date_from (ISO 8601 datetime with timezone)
     - date_to: Filter records <= date_to (ISO 8601 datetime with timezone)
 
@@ -5835,8 +5835,8 @@ def list_email_deliveries(
     if user_id is not None:
         query = query.where(EmailDeliveryLog.user_id == user_id)
 
-    if delivery_status is not None:
-        query = query.where(EmailDeliveryLog.status == delivery_status)
+    if status_filter is not None:
+        query = query.where(EmailDeliveryLog.status == status_filter)
 
     if date_from is not None:
         query = query.where(EmailDeliveryLog.created_at >= date_from)
@@ -5857,7 +5857,9 @@ def list_email_deliveries(
                 [EmailDeliveryLog.user_id == user_id] if user_id is not None else []
             ),
             *(
-                [EmailDeliveryLog.status == status] if status is not None else []
+                [EmailDeliveryLog.status == status_filter]
+                if status_filter is not None
+                else []
             ),
             *(
                 [EmailDeliveryLog.created_at >= date_from]
@@ -5865,7 +5867,9 @@ def list_email_deliveries(
                 else []
             ),
             *(
-                [EmailDeliveryLog.created_at <= date_to] if date_to is not None else []
+                [EmailDeliveryLog.created_at <= date_to]
+                if date_to is not None
+                else []
             ),
         )
     )

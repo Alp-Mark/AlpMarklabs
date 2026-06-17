@@ -11,7 +11,6 @@ Tests cover:
 from __future__ import annotations
 
 import pytest
-
 from worker.app.simulation.early_warning_detector import (
     EarlyWarningDetector,
     OperationalAnomalyAlertHandler,

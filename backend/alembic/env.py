@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from logging.config import fileConfig
 import os
-
-from alembic import context
-from sqlalchemy import engine_from_config, pool
-from sqlalchemy.engine import Connection
+from logging.config import fileConfig
 
 from backend.app.db import models  # noqa: F401
 from backend.app.db.base import Base
+from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import Connection
+
+from alembic import context
 
 config = context.config
 

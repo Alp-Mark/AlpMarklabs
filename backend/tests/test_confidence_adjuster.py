@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from worker.app.simulation.confidence_adjuster import ConfidenceAdjuster
 from worker.app.simulation.early_warning_detector import (
     EarlyWarningResult,
@@ -19,13 +18,13 @@ class TestStalenessHoursComputation:
 
     def test_fresh_data_zero_staleness(self) -> None:
         """Data synced now should have zero staleness."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         staleness = ConfidenceAdjuster.compute_staleness_hours(now, now)
         assert staleness == pytest.approx(0.0, abs=0.01)
 
     def test_one_hour_old(self) -> None:
         """Data synced 1 hour ago should show 1.0 hour staleness."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         one_hour_ago = now - timedelta(hours=1)
         staleness = ConfidenceAdjuster.compute_staleness_hours(
             one_hour_ago, now
@@ -34,7 +33,7 @@ class TestStalenessHoursComputation:
 
     def test_one_day_old(self) -> None:
         """Data synced 24 hours ago should show 24.0 hour staleness."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         one_day_ago = now - timedelta(days=1)
         staleness = ConfidenceAdjuster.compute_staleness_hours(
             one_day_ago, now
@@ -43,7 +42,7 @@ class TestStalenessHoursComputation:
 
     def test_seven_days_old(self) -> None:
         """Data synced 7 days ago should show 168.0 hour staleness."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         seven_days_ago = now - timedelta(days=7)
         staleness = ConfidenceAdjuster.compute_staleness_hours(
             seven_days_ago, now
@@ -52,7 +51,7 @@ class TestStalenessHoursComputation:
 
     def test_future_timestamp_clamped_to_zero(self) -> None:
         """Future timestamp should be clamped to zero staleness."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         future = now + timedelta(hours=1)
         staleness = ConfidenceAdjuster.compute_staleness_hours(
             future, now
@@ -119,7 +118,7 @@ class TestFreshnessMetadataCreation:
 
     def test_fresh_data_not_stale(self) -> None:
         """Data synced < 48h ago should not be marked stale."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         one_day_ago = now - timedelta(hours=24)
         metadata = ConfidenceAdjuster.create_freshness_metadata(
             one_day_ago, "shopify", now
@@ -130,7 +129,7 @@ class TestFreshnessMetadataCreation:
 
     def test_stale_data_marked_stale(self) -> None:
         """Data synced > 48h ago should be marked stale."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         three_days_ago = now - timedelta(days=3)
         metadata = ConfidenceAdjuster.create_freshness_metadata(
             three_days_ago, "meta_ads", now
@@ -140,7 +139,7 @@ class TestFreshnessMetadataCreation:
 
     def test_critical_staleness_for_old_data(self) -> None:
         """Data > 7 days old should have significant penalty."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ten_days_ago = now - timedelta(days=10)
         metadata = ConfidenceAdjuster.create_freshness_metadata(
             ten_days_ago, "google_ads", now
@@ -175,7 +174,7 @@ class TestEarlyWarningConfidenceAdjustment:
         self, sample_early_warning: EarlyWarningResult
     ) -> None:
         """Fresh data should not reduce confidence."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         freshness = ConfidenceAdjuster.create_freshness_metadata(
             now, "shopify", now
         )
@@ -190,7 +189,7 @@ class TestEarlyWarningConfidenceAdjustment:
         self, sample_early_warning: EarlyWarningResult
     ) -> None:
         """Stale data should reduce confidence proportionally."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         three_days_ago = now - timedelta(days=3)
         freshness = ConfidenceAdjuster.create_freshness_metadata(
             three_days_ago, "shopify", now
@@ -209,7 +208,7 @@ class TestEarlyWarningConfidenceAdjustment:
         self, sample_early_warning: EarlyWarningResult
     ) -> None:
         """Multiple sources should use worst-case staleness penalty."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         fresh = ConfidenceAdjuster.create_freshness_metadata(
             now, "shopify", now
         )
@@ -255,7 +254,7 @@ class TestOperationalAnomalyConfidenceAdjustment:
         self, sample_anomaly_alert: OperationalAnomalyAlertResult
     ) -> None:
         """Fresh data should preserve anomaly confidence."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         freshness = ConfidenceAdjuster.create_freshness_metadata(
             now, "shopify", now
         )
@@ -271,7 +270,7 @@ class TestOperationalAnomalyConfidenceAdjustment:
         self, sample_anomaly_alert: OperationalAnomalyAlertResult
     ) -> None:
         """Stale data should reduce anomaly confidence."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         old_sync = now - timedelta(days=4)
         freshness = ConfidenceAdjuster.create_freshness_metadata(
             old_sync, "inventory_system", now
@@ -338,7 +337,7 @@ class TestConfidenceAdjustmentPreservesOtherFields:
             days_to_breach=5.0,
         )
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         stale = ConfidenceAdjuster.create_freshness_metadata(
             now - timedelta(days=2), "shopify", now
         )
@@ -361,7 +360,7 @@ class TestConfidenceAdjustmentPreservesOtherFields:
             domain="inventory",
         )
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         stale = ConfidenceAdjuster.create_freshness_metadata(
             now - timedelta(days=3), "warehouse", now
         )

@@ -2258,8 +2258,8 @@ class EmailDeliveryLog(Base):
 class Simulation(Base):
     """FR-081, FR-087 / T-081: Three-scenario simulation (baseline/upside/downside).
 
-    Stores the output of the simulation engine: baseline (no change), upside (best case),
-    and downside (risk case) with all projected impacts.
+    Stores the output of the simulation engine: baseline (no change),
+    upside (best case), and downside (risk case) with all projected impacts.
 
     Simulations are created automatically when a recommendation fires (rule engine
     triggers). The simulator uses response functions and scipy.optimize to find x*
@@ -2277,15 +2277,18 @@ class Simulation(Base):
     recommendation_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("recommendations.id"), nullable=True, index=True
     )
-    # Simulation domain: 'acquisition', 'retention', 'margin', 'inventory', 'ops', 'executive'
+    # Simulation domain: 'acquisition', 'retention', 'margin', 'inventory', 'ops',
+    # 'executive'
     domain: Mapped[str] = mapped_column(String(30), nullable=False)
     # Simulation type: 'auto' (fires after rule engine), 'manual' (user-triggered)
     simulation_type: Mapped[str] = mapped_column(
         String(20), nullable=False, default="auto"
     )
-    # Mathematical optimum found by optimizer (e.g., optimal spend level, optimal price point)
+    # Mathematical optimum found by optimizer (e.g., optimal spend level,
+    # optimal price point)
     x_star: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    # Confidence in the simulation output (reflects data freshness and signal strength)
+    # Confidence in the simulation output (reflects data freshness and signal
+    # strength)
     confidence_level: Mapped[str] = mapped_column(String(10), nullable=False)
     # Data freshness signal: high/medium/low (impacts confidence score)
     data_freshness_signal: Mapped[str] = mapped_column(

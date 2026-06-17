@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 
 from backend.app.db.models import EmailDeliveryLog
 
-
 # Retry configuration: max 3 attempts with exponential backoff
 RETRY_ATTEMPTS = 3
 RETRY_INTERVALS = [5, 30, 300]  # 5 sec, 30 sec, 5 min

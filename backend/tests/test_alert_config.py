@@ -6,15 +6,12 @@ authorization, tenant isolation, and audit logging.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Generator
-from uuid import uuid4
 
 import jwt
 import pytest
-from backend.app import security
 from backend.app.db.base import Base
-from backend.app.db.models import Tenant, User, TenantMembership
+from backend.app.db.models import Tenant, TenantMembership, User
 from backend.app.db.session import get_db
 from backend.app.main import app
 from backend.app.security import AUTH_JWT_ALGORITHM, AUTH_JWT_SECRET
@@ -46,7 +43,7 @@ def db_session() -> Generator[Session]:
 
 
 @pytest.fixture()
-def test_client(db_session: Session) -> TestClient:
+def test_client(db_session: Session) -> Generator[TestClient]:
     """Return authenticated test client with database override."""
 
     def override_get_db() -> Generator[Session]:
@@ -126,7 +123,7 @@ def test_list_alert_thresholds(
     test_client: TestClient, db_session: Session
 ) -> None:
     """List alert thresholds returns all thresholds for tenant."""
-    from backend.app.db.models import Tenant, AlertThreshold
+    from backend.app.db.models import AlertThreshold, Tenant
 
     tenant = db_session.query(Tenant).first()
     assert tenant is not None
@@ -161,7 +158,7 @@ def test_get_alert_threshold(
     test_client: TestClient, db_session: Session
 ) -> None:
     """Get specific alert threshold."""
-    from backend.app.db.models import Tenant, AlertThreshold
+    from backend.app.db.models import AlertThreshold, Tenant
 
     tenant = db_session.query(Tenant).first()
     assert tenant is not None
@@ -190,7 +187,7 @@ def test_update_alert_threshold(
     test_client: TestClient, db_session: Session
 ) -> None:
     """Update alert threshold partial fields."""
-    from backend.app.db.models import Tenant, AlertThreshold
+    from backend.app.db.models import AlertThreshold, Tenant
 
     tenant = db_session.query(Tenant).first()
     assert tenant is not None
@@ -226,7 +223,7 @@ def test_delete_alert_threshold(
     test_client: TestClient, db_session: Session
 ) -> None:
     """Delete alert threshold."""
-    from backend.app.db.models import Tenant, AlertThreshold
+    from backend.app.db.models import AlertThreshold, Tenant
 
     tenant = db_session.query(Tenant).first()
     assert tenant is not None
@@ -282,7 +279,7 @@ def test_list_alert_recipients(
     test_client: TestClient, db_session: Session
 ) -> None:
     """List alert recipients returns all recipients for tenant."""
-    from backend.app.db.models import Tenant, User, AlertRecipient
+    from backend.app.db.models import AlertRecipient, Tenant, User
 
     tenant = db_session.query(Tenant).first()
     assert tenant is not None
@@ -321,7 +318,7 @@ def test_update_alert_recipient(
     test_client: TestClient, db_session: Session
 ) -> None:
     """Update alert recipient destination."""
-    from backend.app.db.models import Tenant, User, AlertRecipient
+    from backend.app.db.models import AlertRecipient, Tenant, User
 
     tenant = db_session.query(Tenant).first()
     assert tenant is not None
@@ -358,7 +355,7 @@ def test_delete_alert_recipient(
     test_client: TestClient, db_session: Session
 ) -> None:
     """Delete alert recipient."""
-    from backend.app.db.models import Tenant, User, AlertRecipient
+    from backend.app.db.models import AlertRecipient, Tenant, User
 
     tenant = db_session.query(Tenant).first()
     assert tenant is not None
@@ -386,7 +383,7 @@ def test_alert_threshold_tenant_isolation(
     test_client: TestClient, db_session: Session
 ) -> None:
     """Cannot access alert threshold from different tenant."""
-    from backend.app.db.models import Tenant, AlertThreshold
+    from backend.app.db.models import AlertThreshold, Tenant
 
     tenant1 = db_session.query(Tenant).first()
     assert tenant1 is not None
@@ -417,7 +414,7 @@ def test_alert_recipient_tenant_isolation(
     test_client: TestClient, db_session: Session
 ) -> None:
     """Cannot access alert recipient from different tenant."""
-    from backend.app.db.models import Tenant, User, AlertRecipient
+    from backend.app.db.models import AlertRecipient, Tenant, User
 
     tenant1 = db_session.query(Tenant).first()
     assert tenant1 is not None

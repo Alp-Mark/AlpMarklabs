@@ -318,7 +318,13 @@ class TestCustomSegments:
     def test_custom_segment_unauthorized(
         self, client: TestClient, db_session: Session
     ) -> None:
-        """Test that missing authorization is rejected."""
+        """Test that insufficient role authorization is rejected with 403.
+        
+        Note: The conftest fixture auto-adds auth headers with a user having only
+        'user' platform role. The operations_manager role is required to create
+        custom segments, so this correctly returns 403 Forbidden (authenticated
+        but not authorized).
+        """
         tenant_id_str, _ = _create_tenant_and_get_id(
             client, "Test Brand", "test-brand"
         )
@@ -330,7 +336,7 @@ class TestCustomSegments:
                 "definition": {"aov_min": 500},
             },
         )
-        assert response.status_code == 401
+        assert response.status_code == 403
 
     def test_custom_segment_tenant_not_found(
         self, client: TestClient, db_session: Session

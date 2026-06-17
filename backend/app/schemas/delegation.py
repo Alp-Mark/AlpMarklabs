@@ -15,7 +15,7 @@ class DelegationRuleCreateRequest(BaseModel):
     valid_until: date
 
     @model_validator(mode="after")
-    def valid_until_not_before_valid_from(self) -> "DelegationRuleCreateRequest":
+    def valid_until_not_before_valid_from(self) -> DelegationRuleCreateRequest:
         if self.valid_until < self.valid_from:
             raise ValueError("valid_until must be on or after valid_from")
         return self

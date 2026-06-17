@@ -1873,9 +1873,11 @@ def test_generate_export_link_for_active_share(
         )
     )
     db_session.commit()
-    share_id = db_session.scalar(
+    share = db_session.scalar(
         select(ExportShare).where(ExportShare.tenant_id == tenant.id)
-    ).id
+    )
+    assert share is not None
+    share_id = share.id
 
     # Generate download link
     response = client.post(
@@ -1923,9 +1925,11 @@ def test_generate_link_for_revoked_share(
         )
     )
     db_session.commit()
-    share_id = db_session.scalar(
+    share = db_session.scalar(
         select(ExportShare).where(ExportShare.tenant_id == tenant.id)
-    ).id
+    )
+    assert share is not None
+    share_id = share.id
 
     response = client.post(
         f"/tenants/{tenant.id}/exports/{share_id}/generate-link",
@@ -1997,7 +2001,7 @@ def test_download_export_with_valid_token(
         )
     )
     db_session.commit()
-    share_id = db_session.scalar(
+    share_id = db_session.scalar(  # type: ignore[union-attr]
         select(ExportShare).where(ExportShare.tenant_id == tenant.id)
     ).id
 
@@ -2149,7 +2153,7 @@ def test_export_link_tracks_access_timestamp(
         )
     )
     db_session.commit()
-    share_id = db_session.scalar(
+    share_id = db_session.scalar(  # type: ignore[union-attr]
         select(ExportShare).where(ExportShare.tenant_id == tenant.id)
     ).id
 
@@ -2163,6 +2167,7 @@ def test_export_link_tracks_access_timestamp(
     link_before = db_session.scalar(
         select(ExportLink).where(ExportLink.token == token)
     )
+    assert link_before is not None
     assert link_before.accessed_at is None
 
     # Download file
@@ -2171,6 +2176,7 @@ def test_export_link_tracks_access_timestamp(
 
     # Check accessed_at after download
     db_session.refresh(link_before)
+    assert link_before is not None
     assert link_before.accessed_at is not None
 
 
@@ -2444,6 +2450,7 @@ def test_launch_simulation_preserves_recommendation_link(
     sim = db_session.scalar(
         select(Simulation).where(Simulation.id == UUID(sim_id))
     )
+    assert sim is not None
     assert sim.recommendation_id == rec.id
 
 

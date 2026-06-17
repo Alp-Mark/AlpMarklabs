@@ -8,16 +8,15 @@ from datetime import date
 
 import jwt
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
-
 from backend.app.db.base import Base
 from backend.app.db.models import TenantMembership, User
 from backend.app.db.session import get_db
 from backend.app.main import app
 from backend.app.security import AUTH_JWT_ALGORITHM, AUTH_JWT_SECRET
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -437,9 +436,8 @@ def test_revoke_requires_brand_admin(client: TestClient) -> None:
 
 def test_audit_event_written_on_create(client: TestClient) -> None:
     """Creating a delegation rule writes a delegation_rule.created audit event."""
-    from sqlalchemy import select as sa_select
-
     from backend.app.db.models import AuditEvent
+    from sqlalchemy import select as sa_select
 
     email = "admin@del014.local"
     tenant_id = _create_tenant(client, "del014", email)

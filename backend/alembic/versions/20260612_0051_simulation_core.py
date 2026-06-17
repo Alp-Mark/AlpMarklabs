@@ -7,8 +7,9 @@ Create Date: 2026-06-12 00:00:00.000000
 FR-081, FR-087 / T-081: Simulation core with baseline/upside/downside scenarios.
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "20260612_0051"

@@ -9,9 +9,9 @@ Revises: 20260610_0044
 Create Date: 2026-06-10
 """
 
-from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "20260610_0045"
 down_revision = "20260610_0044"

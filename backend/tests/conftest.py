@@ -2,7 +2,9 @@
 Pytest configuration and fixtures for all backend tests.
 """
 
+import os
 from collections.abc import Generator
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import jwt
@@ -16,6 +18,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+
+# Load .env file for tests if it exists (without external dependency)
+_env_file = Path(__file__).parent.parent.parent / ".env"
+if _env_file.exists():
+    with open(_env_file) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ[key.strip()] = value.strip()
 
 
 @pytest.fixture(scope="function")
@@ -48,7 +60,7 @@ def db_session() -> Generator[Session]:
 
 
 @pytest.fixture
-def client(db_session: Session, user: User) -> Generator[TestClient, None, None]:
+def client(db_session: Session, user: User) -> Generator[TestClient]:
     """Provide FastAPI test client with in-memory database and JWT auth."""
     def override_get_db() -> Generator[Session]:
         yield db_session
@@ -154,7 +166,7 @@ def nonexistent_uuid() -> UUID:
 
 
 @pytest.fixture
-def other_client(db_session: Session, other_user: User) -> Generator[TestClient, None, None]:
+def other_client(db_session: Session, other_user: User) -> Generator[TestClient]:
     """Provide TestClient authenticated as second user."""
     def override_get_db() -> Generator[Session]:
         yield db_session

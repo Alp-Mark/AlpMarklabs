@@ -11,7 +11,6 @@ Tests cover:
 from __future__ import annotations
 
 import pytest
-
 from worker.app.simulation.alert_generator import AlertDecision
 from worker.app.simulation.domain_alert_handlers import DomainAlertHandler
 
