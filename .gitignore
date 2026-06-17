@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type checking
+.mypy_cache/
+
+# Linting
+.ruff_cache/
+
+# SQLite dev/test databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# macOS
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+
+# Alembic generated files (keep migrations, not temp DBs)
+backend/*.db
+worker/*.db
+
+# Node (frontend)
+node_modules/
+frontend/.next/
+frontend/dist/
+frontend/build/
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate*
+infra/aws/.terraform/

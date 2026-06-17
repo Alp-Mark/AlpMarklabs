@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+psycopg[binary]
+PyJWT
+cryptography
+reportlab
+python-dateutil
+itsdangerous
+openai

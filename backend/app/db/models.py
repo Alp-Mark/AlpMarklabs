@@ -1,0 +1,2447 @@
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, date, datetime, timedelta
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import Uuid
+
+from backend.app.db.base import Base
+
+
+def _default_invitation_expiry() -> datetime:
+    return datetime.now(UTC) + timedelta(days=7)
+
+
+class Tenant(Base):
+    __tablename__ = "tenants"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    billing_plan: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="starter"
+    )
+    billing_cycle: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="monthly"
+    )
+    billing_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active"
+    )
+    seat_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    # NFR-022 / T-052: tenant base currency (ISO 4217) and locale (IETF BCP-47)
+    base_currency: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="USD"
+    )
+    locale: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="en-US"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    memberships: Mapped[list[TenantMembership]] = relationship(back_populates="tenant")
+    invitations: Mapped[list[UserInvitation]] = relationship(back_populates="tenant")
+    notification_routes: Mapped[list[NotificationRoutingSetting]] = relationship(
+        back_populates="tenant"
+    )
+    audit_events: Mapped[list[AuditEvent]] = relationship(back_populates="tenant")
+    privacy_requests: Mapped[list[PrivacyRequest]] = relationship(
+        back_populates="tenant"
+    )
+    connectors: Mapped[list[ConnectorIntegration]] = relationship(
+        back_populates="tenant"
+    )
+    connector_credentials: Mapped[list[ConnectorCredentialVault]] = relationship(
+        back_populates="tenant"
+    )
+    shopify_orders: Mapped[list[ShopifyOrder]] = relationship(
+        back_populates="tenant"
+    )
+    shopify_inventory_items: Mapped[list[ShopifyInventoryItem]] = relationship(
+        back_populates="tenant"
+    )
+    locations: Mapped[list[Location]] = relationship(
+        back_populates="tenant"
+    )
+    acquisition_cohorts: Mapped[list[AcquisitionCohort]] = relationship(
+        back_populates="tenant"
+    )
+    custom_segments: Mapped[list[CustomSegment]] = relationship(
+        back_populates="tenant"
+    )
+    meta_ad_spends: Mapped[list[MetaAdSpend]] = relationship(back_populates="tenant")
+    google_ad_spends: Mapped[list[GoogleAdSpend]] = relationship(
+        back_populates="tenant"
+    )
+    executive_kpi_snapshots: Mapped[list[ExecutiveKpiSnapshot]] = relationship(
+        back_populates="tenant"
+    )
+    acquisition_metrics_snapshots: Mapped[list[AcquisitionMetricsSnapshot]] = (
+        relationship(back_populates="tenant")
+    )
+    retention_daily_snapshots: Mapped[list[RetentionDailySnapshot]] = relationship(
+        back_populates="tenant"
+    )
+    cohort_retention_snapshots: Mapped[list[CohortRetentionSnapshot]] = relationship(
+        back_populates="tenant"
+    )
+    segment_margin_snapshots: Mapped[list[SegmentMarginSnapshot]] = relationship(
+        back_populates="tenant"
+    )
+    cohort_return_signals: Mapped[list[CohortReturnSignal]] = relationship(
+        back_populates="tenant"
+    )
+    cost_driver_snapshots: Mapped[list[CostDriverSnapshot]] = relationship(
+        back_populates="tenant"
+    )
+    margin_drift_thresholds: Mapped[list[MarginDriftThreshold]] = relationship(
+        back_populates="tenant"
+    )
+    margin_drift_snapshots: Mapped[list[MarginDriftSnapshot]] = relationship(
+        back_populates="tenant"
+    )
+    cost_inputs: Mapped[list[CostInput]] = relationship(back_populates="tenant")
+    cost_input_versions: Mapped[list[CostInputVersion]] = relationship(
+        back_populates="tenant"
+    )
+    inventory_risk_thresholds: Mapped[list[InventoryRiskThreshold]] = relationship(
+        back_populates="tenant"
+    )
+    inventory_risk_snapshots: Mapped[list[InventoryRiskSnapshot]] = relationship(
+        back_populates="tenant"
+    )
+    shopify_order_line_items: Mapped[list[ShopifyOrderLineItem]] = relationship(
+        back_populates="tenant"
+    )
+    operational_impact_snapshots: Mapped[
+        list[OperationalImpactSnapshot]
+    ] = relationship(
+        back_populates="tenant"
+    )
+    recommendations: Mapped[list[Recommendation]] = relationship(
+        back_populates="tenant"
+    )
+    rule_thresholds: Mapped[list[TenantRuleThreshold]] = relationship(
+        back_populates="tenant"
+    )
+    recommendation_suppression_states: Mapped[
+        list[RecommendationSuppressionState]
+    ] = relationship(back_populates="tenant")
+    delegation_rules: Mapped[list[DelegationRule]] = relationship(
+        back_populates="tenant"
+    )
+    saved_analysis_views: Mapped[list[SavedAnalysisView]] = relationship(
+        back_populates="tenant"
+    )
+    annotations: Mapped[list[AnalysisAnnotation]] = relationship(
+        back_populates="tenant"
+    )
+    alert_thresholds: Mapped[list[AlertThreshold]] = relationship(
+        back_populates="tenant"
+    )
+    alert_recipients: Mapped[list[AlertRecipient]] = relationship(
+        back_populates="tenant"
+    )
+    alert_acknowledgements: Mapped[list[AlertAcknowledgement]] = relationship(
+        back_populates="tenant"
+    )
+    alert_dismissals: Mapped[list[AlertDismissal]] = relationship(
+        back_populates="tenant"
+    )
+    escalation_rules: Mapped[list[EscalationRule]] = relationship(
+        back_populates="tenant"
+    )
+    alert_event_logs: Mapped[list[AlertEventLog]] = relationship(
+        back_populates="tenant"
+    )
+    email_delivery_logs: Mapped[list[EmailDeliveryLog]] = relationship(
+        back_populates="tenant"
+    )
+    simulations: Mapped[list[Simulation]] = relationship(
+        back_populates="tenant"
+    )
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
+    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    memberships: Mapped[list[TenantMembership]] = relationship(back_populates="user")
+    alert_recipients: Mapped[list[AlertRecipient]] = relationship(
+        back_populates="user"
+    )
+    alert_acknowledgements: Mapped[list[AlertAcknowledgement]] = relationship(
+        back_populates="user"
+    )
+    alert_dismissals: Mapped[list[AlertDismissal]] = relationship(
+        back_populates="user"
+    )
+    created_escalation_rules: Mapped[list[EscalationRule]] = relationship(
+        back_populates="created_by_user",
+        foreign_keys="EscalationRule.created_by_user_id",
+    )
+    triggered_alert_events: Mapped[list[AlertEventLog]] = relationship(
+        back_populates="actor_user",
+        foreign_keys="AlertEventLog.actor_user_id",
+    )
+    email_deliveries: Mapped[list[EmailDeliveryLog]] = relationship(
+        back_populates="user"
+    )
+
+
+class TenantMembership(Base):
+    __tablename__ = "tenant_memberships"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "user_id", name="uq_tenant_membership_tenant_user"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    role: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="growth_performance_manager"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="memberships")
+    user: Mapped[User] = relationship(back_populates="memberships")
+
+
+class UserInvitation(Base):
+    __tablename__ = "user_invitations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), nullable=False)
+    token: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_default_invitation_expiry
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="invitations")
+
+
+class NotificationRoutingSetting(Base):
+    __tablename__ = "notification_routing_settings"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "alert_type",
+            "channel",
+            "destination",
+            name="uq_notification_route_per_target",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    alert_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    channel: Mapped[str] = mapped_column(String(20), nullable=False)
+    destination: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="notification_routes")
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    details: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="audit_events")
+
+
+class PrivacyRequest(Base):
+    __tablename__ = "privacy_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    requested_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    request_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    subject_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    resolution_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="privacy_requests")
+
+
+class ConnectorIntegration(Base):
+    __tablename__ = "connector_integrations"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "source", name="uq_connector_per_tenant_source"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    auth_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="oauth")
+    status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="disconnected",
+    )
+    shop_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    oauth_state: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    credential_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    connected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    oauth_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    oauth_expiry_warning_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    oauth_expired_alert_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    last_sync_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="connectors")
+    credential: Mapped[ConnectorCredentialVault | None] = relationship(
+        back_populates="connector",
+        uselist=False,
+    )
+    shopify_orders: Mapped[list[ShopifyOrder]] = relationship(
+        back_populates="connector"
+    )
+    shopify_inventory_items: Mapped[list[ShopifyInventoryItem]] = relationship(
+        back_populates="connector"
+    )
+    locations: Mapped[list[Location]] = relationship(
+        back_populates="connector"
+    )
+    meta_ad_spends: Mapped[list[MetaAdSpend]] = relationship(
+        back_populates="connector"
+    )
+    google_ad_spends: Mapped[list[GoogleAdSpend]] = relationship(
+        back_populates="connector"
+    )
+
+
+class ConnectorCredentialVault(Base):
+    __tablename__ = "connector_credential_vault"
+    __table_args__ = (
+        UniqueConstraint("connector_id", name="uq_connector_credential_connector"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("connector_integrations.id"), nullable=False
+    )
+    secret_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    secret_ciphertext: Mapped[str] = mapped_column(String(2000), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    key_version: Mapped[str] = mapped_column(String(50), nullable=False, default="v1")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="connector_credentials")
+    connector: Mapped[ConnectorIntegration] = relationship(back_populates="credential")
+
+
+class MetaAdSpend(Base):
+    __tablename__ = "meta_ad_spends"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "connector_id",
+            "external_campaign_id",
+            "spend_date",
+            name="uq_meta_ad_spend_per_campaign_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("connector_integrations.id"), nullable=False
+    )
+    external_campaign_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    campaign_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    spend_date: Mapped[date] = mapped_column(Date, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="USD")
+    spend_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="meta_ad_spends")
+    connector: Mapped[ConnectorIntegration] = relationship(
+        back_populates="meta_ad_spends"
+    )
+
+
+class GoogleAdSpend(Base):
+    __tablename__ = "google_ad_spends"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "connector_id",
+            "external_campaign_id",
+            "spend_date",
+            name="uq_google_ad_spend_per_campaign_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("connector_integrations.id"), nullable=False
+    )
+    external_campaign_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    campaign_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    spend_date: Mapped[date] = mapped_column(Date, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="USD")
+    spend_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="google_ad_spends")
+    connector: Mapped[ConnectorIntegration] = relationship(
+        back_populates="google_ad_spends"
+    )
+
+
+class ShopifyOrder(Base):
+    __tablename__ = "shopify_orders"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "connector_id",
+            "external_order_id",
+            name="uq_shopify_order_per_connector",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("connector_integrations.id"), nullable=False
+    )
+    external_order_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    customer_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    order_number: Mapped[str] = mapped_column(String(100), nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="USD")
+    total_amount: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    discount_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    shipping_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    refund_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_refunded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    order_created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="shopify_orders")
+    connector: Mapped[ConnectorIntegration] = relationship(
+        back_populates="shopify_orders"
+    )
+    line_items: Mapped[list[ShopifyOrderLineItem]] = relationship(
+        back_populates="order"
+    )
+
+
+class ShopifyInventoryItem(Base):
+    __tablename__ = "shopify_inventory_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "connector_id",
+            "external_inventory_item_id",
+            name="uq_shopify_inventory_item_per_connector",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("connector_integrations.id"), nullable=False
+    )
+    external_inventory_item_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    sku: Mapped[str] = mapped_column(String(100), nullable=False)
+    product_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    variant_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    available_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reorder_point: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_per_unit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="shopify_inventory_items")
+    connector: Mapped[ConnectorIntegration] = relationship(
+        back_populates="shopify_inventory_items"
+    )
+
+
+class Location(Base):
+    """Warehouse or fulfillment location metadata.
+    
+    Stores mapping between external location IDs (e.g. Shopify location_id)
+    and human-readable location names/metadata.
+    Used for multi-warehouse inventory views.
+    """
+    __tablename__ = "locations"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "connector_id",
+            "external_location_id",
+            name="uq_location_per_tenant_connector_external_id",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    connector_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("connector_integrations.id"), nullable=False
+    )
+    external_location_id: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    location_type: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="locations")
+    connector: Mapped[ConnectorIntegration] = relationship(
+        back_populates="locations"
+    )
+
+
+class ExecutiveKpiSnapshot(Base):
+    __tablename__ = "executive_kpi_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "snapshot_date",
+            name="uq_executive_kpi_snapshot_per_tenant_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    period_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    revenue_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    ad_spend_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    blended_roas: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    contribution_margin_pct: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.0,
+    )
+    drift: Mapped[dict[str, float | None]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=dict,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="executive_kpi_snapshots")
+
+
+class AcquisitionMetricsSnapshot(Base):
+    __tablename__ = "acquisition_metrics_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "channel",
+            "snapshot_date",
+            name="uq_acquisition_metrics_per_tenant_channel_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    channel: Mapped[str] = mapped_column(String(50), nullable=False)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    period_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ad_spend_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    revenue_attributed: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    order_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    roas: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    cac: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    contribution_margin_pct: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    payback_period_days: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    payback_upside_days: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    payback_downside_days: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(
+        back_populates="acquisition_metrics_snapshots"
+    )
+
+
+class RetentionDailySnapshot(Base):
+    __tablename__ = "retention_daily_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "snapshot_date",
+            name="uq_retention_daily_per_tenant_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    total_customers: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    repeat_customers: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    repeat_purchase_rate_pct: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    trend_30d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trend_60d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trend_90d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expected_repurchase_cadence_days: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    lifecycle_funnel: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    churn_risk_summary: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="retention_daily_snapshots")
+
+
+class CohortRetentionSnapshot(Base):
+    __tablename__ = "cohort_retention_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "cohort_month",
+            "snapshot_date",
+            name="uq_cohort_retention_per_tenant_cohort_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    cohort_month: Mapped[str] = mapped_column(String(7), nullable=False)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    cohort_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    repeat_customer_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    repeat_purchase_rate_pct: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    days_since_cohort_start: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    avg_days_to_second_order: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="cohort_retention_snapshots")
+
+
+class SegmentMarginSnapshot(Base):
+    """FR-041: Contribution margin per customer segment, computed daily.
+
+    One row per tenant × segment_type × snapshot_date.
+    COGS is stored as 0.0 until cost inputs are wired in (T-047/T-048).
+    data_completeness records which cost components were available at
+    computation time so consumers can surface the right confidence signal.
+    """
+
+    __tablename__ = "segment_margin_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "segment_type",
+            "snapshot_date",
+            name="uq_segment_margin_per_tenant_segment_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    segment_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    period_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    customer_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    order_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    revenue: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    cogs: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    shipping_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    returns_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    acquisition_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    contribution_margin_amount: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    contribution_margin_pct: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    data_completeness: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="segment_margin_snapshots")
+
+
+class CohortReturnSignal(Base):
+    """FR-042: Return/refund data as a retention signal per cohort.
+
+    Completely separate from the operational returns view — no unit cost
+    or logistics data is stored here.  One row per tenant × cohort_month
+    × snapshot_date.  The repeat_purchase_rate_pct is copied from the
+    most recent CohortRetentionSnapshot so callers can compare the two
+    metrics side-by-side without a join.
+    """
+
+    __tablename__ = "cohort_return_signals"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "cohort_month",
+            "snapshot_date",
+            name="uq_cohort_return_signal_per_tenant_cohort_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    cohort_month: Mapped[str] = mapped_column(String(7), nullable=False)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    cohort_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_orders: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    refunded_orders: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    return_rate_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    repeat_purchase_rate_pct: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="cohort_return_signals")
+
+
+class CostDriverSnapshot(Base):
+    """FR-048/FR-049: Daily cost-driver impact per driver type.
+
+    One row per tenant × driver_type × snapshot_date.  Captures the
+    absolute cost, % of revenue, margin impact, data source, and a
+    confidence label derived purely from how recently the underlying
+    data was synced or updated (FR-049: recency, not source type).
+
+    Phase 1 driver types: cogs, shipping, returns, discounts, ad_spend.
+    COGS is 0.0 until cost inputs are provided (T-048).
+    """
+
+    __tablename__ = "cost_driver_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "driver_type",
+            "snapshot_date",
+            name="uq_cost_driver_per_tenant_driver_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    driver_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    period_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    absolute_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    revenue: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    pct_of_revenue: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    margin_impact_amount: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_platform: Mapped[str] = mapped_column(String(50), nullable=False)
+    last_updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    confidence_score: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    confidence_label: Mapped[str] = mapped_column(String(10), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="cost_driver_snapshots")
+
+
+class MarginDriftThreshold(Base):
+    """FR-053: Finance Controller's per-channel/category alert threshold profiles.
+
+    One profile per tenant × channel × category.  Takes effect on the
+    next daily drift computation run after it is created or updated.
+    """
+
+    __tablename__ = "margin_drift_thresholds"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "channel",
+            "category",
+            name="uq_margin_drift_threshold_per_tenant_channel_category",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    channel: Mapped[str] = mapped_column(String(100), nullable=False)
+    category: Mapped[str] = mapped_column(String(100), nullable=False)
+    threshold_pct: Mapped[float] = mapped_column(Float, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="margin_drift_thresholds")
+
+
+class MarginDriftSnapshot(Base):
+    """FR-054: Daily margin drift computation per channel/category.
+
+    One row per tenant × channel × category × snapshot_date.
+    expected_margin_pct and drift_pct are None on the first snapshot
+    (no prior baseline to compare against).  threshold_exceeded triggers
+    an alert AuditEvent when True.
+    """
+
+    __tablename__ = "margin_drift_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "channel",
+            "category",
+            "snapshot_date",
+            name="uq_margin_drift_per_tenant_channel_category_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    channel: Mapped[str] = mapped_column(String(100), nullable=False)
+    category: Mapped[str] = mapped_column(String(100), nullable=False)
+    actual_margin_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    expected_margin_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    drift_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    threshold_exceeded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    variance_reason: Mapped[str] = mapped_column(String(100), nullable=False)
+    data_completeness: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="margin_drift_snapshots")
+
+
+class CostInput(Base):
+    """FR-050: Tiered/banded cost inputs managed by the Finance Controller.
+
+    Each row represents one tier or band of a cost input type for a tenant.
+    Shipping cost inputs are banded by weight range and destination zone.
+    COGS inputs include landed cost (import duties).  Ad-spend VAT and
+    return-processing inputs are stored as flat amounts or percentages.
+
+    FR-051: When input_type == "cogs" the change is high-impact and
+    confirmation_required is set True on create/update.  The change only
+    propagates to live computations after the Finance Controller calls the
+    confirm endpoint.
+    """
+
+    __tablename__ = "cost_inputs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    # "shipping" | "cogs" | "ad_spend_vat" | "return_processing"
+    input_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Human-readable label, e.g. "0–0.5 kg domestic"
+    tier_label: Mapped[str] = mapped_column(String(150), nullable=False)
+    # Shipping-tier bounds (kg).  NULL for non-shipping types.
+    weight_min_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weight_max_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # "domestic" | "eu" | "international" | NULL for non-shipping types
+    destination_zone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Cost value
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    # "per_order" | "per_kg" | "flat" | "pct"
+    unit: Mapped[str] = mapped_column(String(50), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # FR-051: high-impact (cogs) changes require explicit confirmation
+    confirmation_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    confirmed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="cost_inputs")
+    versions: Mapped[list[CostInputVersion]] = relationship(
+        back_populates="cost_input",
+        order_by="CostInputVersion.version_number",
+    )
+
+
+class CostInputVersion(Base):
+    """FR-052 / NFR-013: Full version history for every cost input.
+
+    One row per change event (created, updated, deactivated).  version_number
+    is 1-based and monotonically increasing per cost_input_id.  The first row
+    (version_number == 1) represents the initial value captured in AlpMark
+    (including any onboarding-imported baseline).  prior_amount and prior_unit
+    are NULL on version 1.
+    """
+
+    __tablename__ = "cost_input_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    cost_input_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("cost_inputs.id"), nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    # "created" | "updated" | "deactivated"
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+    prior_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    new_amount: Mapped[float] = mapped_column(Float, nullable=False)
+    prior_unit: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    new_unit: Mapped[str] = mapped_column(String(50), nullable=False)
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    variance_reason: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="cost_input_versions")
+    cost_input: Mapped[CostInput] = relationship(back_populates="versions")
+
+
+class InventoryRiskThreshold(Base):
+    """FR-060 / FR-061 / FR-062: Configurable alert thresholds per tenant × category.
+
+    Thresholds control when each status is triggered during the daily
+    inventory risk computation.  Use category="all" for a tenant-wide
+    fallback.  Category-specific rows override "all" when the SKU's
+    category matches.
+    """
+
+    __tablename__ = "inventory_risk_thresholds"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "category",
+            name="uq_inventory_risk_threshold_per_tenant_category",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    category: Mapped[str] = mapped_column(String(100), nullable=False)
+    # FR-060: days-to-stockout alert threshold
+    stockout_alert_days: Mapped[float] = mapped_column(
+        Float, nullable=False, default=7.0
+    )
+    # FR-061: weeks-of-cover threshold to flag overstock
+    overstock_weeks_threshold: Mapped[float] = mapped_column(
+        Float, nullable=False, default=12.0
+    )
+    # FR-062: slow-moving requires all four conditions
+    slow_moving_min_qty: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=5
+    )
+    slow_moving_min_weeks_cover: Mapped[float] = mapped_column(
+        Float, nullable=False, default=4.0
+    )
+    slow_moving_min_capital: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="inventory_risk_thresholds")
+
+
+class InventoryRiskSnapshot(Base):
+    """FR-058 to FR-062: Daily inventory risk snapshot per SKU.
+
+    One row per tenant × sku × snapshot_date.  Velocity figures are
+    estimated from tenant-level order counts distributed across active
+    SKUs (Phase 1 — no line-item data).  data_completeness records this
+    limitation.  Seasonal adjustment is reserved for Phase 2.
+    """
+
+    __tablename__ = "inventory_risk_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "sku",
+            "snapshot_date",
+            name="uq_inventory_risk_per_tenant_sku_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    sku: Mapped[str] = mapped_column(String(100), nullable=False)
+    product_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    variant_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    current_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reorder_point: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # "in_stock" | "low_stock" | "stockout_risk" | "overstock" | "slow_moving"
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    daily_velocity_30d: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    days_to_stockout: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weekly_velocity_90d: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    weeks_of_cover: Mapped[float | None] = mapped_column(Float, nullable=True)
+    days_since_last_sale: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    capital_at_risk: Mapped[float | None] = mapped_column(Float, nullable=True)
+    seasonal_adjustment_applied: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    # "high" | "medium" | "low"
+    confidence: Mapped[str] = mapped_column(String(10), nullable=False)
+    data_completeness: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="inventory_risk_snapshots")
+
+
+class ShopifyOrderLineItem(Base):
+    """One row per line item within a Shopify order.
+
+    Stores per-SKU units sold, enabling real velocity computation
+    in the inventory risk job (FR-058 to FR-062).
+    """
+
+    __tablename__ = "shopify_order_line_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "order_id",
+            "line_item_index",
+            name="uq_shopify_order_line_item_per_order_index",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("shopify_orders.id"), nullable=False
+    )
+    # Position within the order (0-based) used as dedup key
+    line_item_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    sku: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    product_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    variant_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    unit_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    order_created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="shopify_order_line_items")
+    order: Mapped[ShopifyOrder] = relationship(back_populates="line_items")
+
+
+class OperationalImpactSnapshot(Base):
+    """FR-064 to FR-066: Daily operational impact per SKU.
+
+    FR-064: Stockout lost-revenue estimate and repeat-purchase risk.
+    FR-065: Logistics cost burden per SKU (shipping + return processing).
+    FR-066: Operational return rate analytics — completely separate from
+            the retention cohort return signal view.
+
+    One row per tenant × sku × snapshot_date.
+    """
+
+    __tablename__ = "operational_impact_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "sku",
+            "snapshot_date",
+            name="uq_operational_impact_per_tenant_sku_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    sku: Mapped[str] = mapped_column(String(100), nullable=False)
+    product_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    variant_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # FR-064: Stockout impact
+    # "high" | "medium" | "low" | "none"
+    inventory_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    daily_velocity_30d: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    avg_unit_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    days_to_restock_estimate: Mapped[float] = mapped_column(
+        Float, nullable=False, default=7.0
+    )
+    stockout_lost_revenue_estimate: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    # "high" | "medium" | "low" | "none"
+    repeat_purchase_risk: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="none"
+    )
+
+    # FR-065: Logistics cost burden
+    logistics_cost_per_unit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    logistics_cost_total_30d: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    logistics_margin_impact_pct: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+
+    # FR-066: Operational return analytics (separate from retention cohort)
+    units_sold_30d: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    return_quantity_30d: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    return_rate_30d_pct: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
+    return_cost_per_unit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    return_cost_total_30d: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # "high" | "medium" | "low"
+    confidence: Mapped[str] = mapped_column(String(10), nullable=False)
+    data_completeness: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(
+        back_populates="operational_impact_snapshots"
+    )
+
+
+class Recommendation(Base):
+    """FR-071 / T-053: Persisted output of the deterministic rule engine.
+
+    One row per tenant × rule_id × snapshot_date.  The unique constraint
+    prevents duplicate recommendations if the job runs more than once in
+    a day.
+
+    Status lifecycle (cross-cutting rule 2):
+        new → reviewed → approved → rejected
+            → implemented_externally → outcome_observed
+    """
+
+    __tablename__ = "recommendations"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "rule_id",
+            "snapshot_date",
+            name="uq_recommendation_per_tenant_rule_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    rule_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    domain: Mapped[str] = mapped_column(String(30), nullable=False)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    affected_area: Mapped[str] = mapped_column(String(255), nullable=False)
+    signal_summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    suggested_action: Mapped[str] = mapped_column(String(500), nullable=False)
+    estimated_impact: Mapped[float | None] = mapped_column(Float, nullable=True)
+    confidence_level: Mapped[str] = mapped_column(String(10), nullable=False)
+    data_freshness_context: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="new"
+    )
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    impact_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    review_note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # FR-076 / T-062: Stamps when recommendation transitions to "approved" status.
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # FR-076 / T-062: Implementation gap flag. Values: null (no gap),
+    # "warning" (14-30 days since approved), "escalated" (>30 days since approved).
+    # Scanned daily by task.
+    implementation_gap_flag: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+    # FR-069, FR-077 / T-063: Outcome observation and cross-metric impact tracking.
+    # Stamped when recommendation transitions to "implemented_externally" status.
+    implemented_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Stamped when recommendation transitions to "outcome_observed" status.
+    outcome_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Before-window snapshot of all 7 KPIs at implementation time.
+    # Keys: contribution_margin_pct, cac_payback_period, blended_roas,
+    # return_rate_pct, repeat_purchase_rate_pct, cac_by_channel, time_to_insight.
+    outcome_metrics_before: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True
+    )
+    # After-window snapshot of all 7 KPIs after observation window (default 30 days).
+    outcome_metrics_after: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True
+    )
+    # Comparison summary: per metric shows before/after/change/direction; flags
+    # any guardrail violations (e.g., ROAS improved but repeat rate dropped).
+    outcome_impact_summary: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="recommendations")
+
+
+class TenantRuleThreshold(Base):
+    """FR-071 / T-054: Tenant-configurable threshold for each recommendation rule.
+
+    One row per tenant × rule_id.  Seeded with sensible defaults at tenant
+    creation time.  Brand Admins can update threshold_value via the API,
+    which sets is_customised=True.  suggested_value is populated in T-054b
+    by the suggested-threshold engine.
+    """
+
+    __tablename__ = "tenant_rule_thresholds"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "rule_id",
+            name="uq_tenant_rule_threshold_per_tenant_rule",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    rule_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    threshold_value: Mapped[float] = mapped_column(Float, nullable=False)
+    threshold_unit: Mapped[str] = mapped_column(String(30), nullable=False)
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Populated by T-054b suggested-threshold engine; null until then.
+    suggested_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Set to True when a Brand Admin explicitly changes the value.
+    is_customised: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="rule_thresholds")
+
+
+class RecommendationSuppressionState(Base):
+    """FR-074 / T-060: Tracks rejection counts and active suppression windows.
+
+    One row per tenant × rule_id.  Created on the first rejection of a
+    recommendation type.  When rejection_count reaches rejection_threshold,
+    suppressed_until is set and further recommendations for that rule are
+    blocked until the window expires or a Brand Admin overrides it.
+    """
+
+    __tablename__ = "recommendation_suppression_states"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "rule_id",
+            name="uq_suppression_per_tenant_rule",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    rule_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    rejection_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    suppressed_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    is_overridden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Configurable per tenant × rule; set at row creation, support-ticket to change.
+    rejection_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    suppression_window_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=30
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(
+        back_populates="recommendation_suppression_states"
+    )
+
+
+class DelegationRule(Base):
+    """FR-023, FR-075 / T-061: Recommendation approval authority delegation.
+
+    Brand Admin or Executive Owner can delegate approval authority for a
+    specific recommendation domain to another tenant member for a bounded
+    date range.  Multiple active delegations for the same domain are allowed.
+    Any Brand Admin can revoke a delegation at any time.
+    """
+
+    __tablename__ = "delegation_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    # Nullable so tests that bypass the full user-creation flow still work,
+    # matching the same pattern used for actor_user_id on AuditEvent.
+    delegator_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    delegatee_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    domain: Mapped[str] = mapped_column(String(50), nullable=False)
+    valid_from: Mapped[date] = mapped_column(Date, nullable=False)
+    valid_until: Mapped[date] = mapped_column(Date, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="delegation_rules")
+
+
+class SavedAnalysisView(Base):
+    """FR-032 / T-064: Saved custom analysis views for quick recall and sharing.
+
+    Stores filters (metrics, date_range, domain, status filters), name,
+    description, and metadata for later reuse and team sharing.
+    """
+
+    __tablename__ = "saved_analysis_views"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # JSON object: {metrics: [...], date_range: {from, to}, domain: string,
+    # rec_status: [...]}, etc. Flexible schema for future extensibility.
+    filters_config: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="saved_analysis_views")
+    created_by: Mapped[User] = relationship()
+    shares: Mapped[list[AnalysisViewShare]] = relationship(
+        back_populates="saved_view"
+    )
+    annotations: Mapped[list[AnalysisAnnotation]] = relationship(
+        back_populates="saved_view"
+    )
+
+
+class AnalysisAnnotation(Base):
+    """FR-033, FR-045, FR-068 / T-065: Timestamped annotations on analysis views.
+
+    Annotations are immutable (created once, never updated). Attach context to
+    analyses and date-linked events (lifecycle, operational).
+    Growth/Retention/Operations personas add these for team context.
+    """
+
+    __tablename__ = "annotations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    saved_view_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("saved_analysis_views.id"), nullable=False
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    created_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    text: Mapped[str] = mapped_column(String(1000), nullable=False)
+    # Optional: Date-linked for lifecycle (FR-045) and operational (FR-068) annotations.
+    event_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Optional: Type tag for future filtering ("lifecycle", "operational", "context").
+    annotation_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    saved_view: Mapped[SavedAnalysisView] = relationship(
+        back_populates="annotations"
+    )
+    tenant: Mapped[Tenant] = relationship(back_populates="annotations")
+    created_by: Mapped[User] = relationship()
+
+
+class AnalysisViewShare(Base):
+    """FR-034 / T-064: Track sharing of analysis views with recipients.
+
+    One row per view × recipient share action. Stores recipient email,
+    shared_by user, shared_at timestamp, and optional one-time token for
+    guest access.
+    """
+
+    __tablename__ = "analysis_view_shares"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    saved_view_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("saved_analysis_views.id"), nullable=False
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    shared_by_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    recipient_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    # Scope: "tenant" (recipient must be tenant member) or "one_time_link"
+    # (guest access via one_time_token).
+    scope: Mapped[str] = mapped_column(String(30), nullable=False, default="tenant")
+    one_time_token: Mapped[str | None] = mapped_column(
+        String(128), unique=True, nullable=True
+    )
+    shared_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    saved_view: Mapped[SavedAnalysisView] = relationship(
+        back_populates="shares"
+    )
+    tenant: Mapped[Tenant] = relationship()
+    shared_by: Mapped[User] = relationship()
+
+
+class CohortSnapshot(Base):
+    """FR-037 / T-066: Pre-computed cohort metrics for side-by-side comparison.
+
+    Captures retention, churn, AOV, and revenue metrics for a cohort over a
+    fixed observation window. Growth/Finance/Executive use these snapshots to
+    compare acquisition quality across time periods.
+    """
+
+    __tablename__ = "cohort_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    # Cohort bucketing: which time period customers were acquired.
+    cohort_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    cohort_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # Grain: 'month', 'week', 'quarter'
+    cohort_grain: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Observation window: how many days after cohort start we measured metrics.
+    observation_window_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Metrics
+    customer_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    repeat_rate: Mapped[float] = mapped_column(Float, nullable=False)
+    churn_rate: Mapped[float] = mapped_column(Float, nullable=False)
+    avg_order_value: Mapped[float] = mapped_column(Float, nullable=False)
+    total_revenue: Mapped[float] = mapped_column(Float, nullable=False)
+    repeat_purchase_frequency: Mapped[float] = mapped_column(Float, nullable=False)
+    # Audit
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship()
+
+
+class AcquisitionCohort(Base):
+    """FR-043 / T-070: Read-only acquisition context for retention managers.
+
+    Captures acquisition metrics (channel, CAC, first-order AOV, customer
+    quality) by cohort time period. Retention managers use this to understand
+    incoming customer quality and segment quality differences for retention
+    strategy analysis.
+    """
+
+    __tablename__ = "acquisition_cohorts"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "cohort_start_date",
+            "cohort_end_date",
+            "channel",
+            name="uq_acquisition_cohort_per_tenant_period_channel",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    # Cohort bucketing: time period when customers were acquired
+    cohort_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    cohort_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    cohort_grain: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Channel from which customers were acquired
+    # (e.g., 'shopify_organic', 'meta_ads', 'google_ads')
+    channel: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Acquisition metrics
+    new_customer_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    blended_cac: Mapped[float] = mapped_column(Float, nullable=False)
+    first_order_aov: Mapped[float] = mapped_column(Float, nullable=False)
+    total_acquisition_spend: Mapped[float] = mapped_column(Float, nullable=False)
+    # Customer quality signal: early indicator of repeat purchase potential
+    repeat_purchase_rate_90d: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    # Audit
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="acquisition_cohorts")
+
+
+class CustomSegment(Base):
+    """FR-044 / T-071: Custom customer segments defined by Retention Manager.
+
+    Retention managers can create and save reusable customer segments
+    (e.g., "High-Value: AOV > £500") for use in dashboards, cohort
+    analysis, and alert configuration. Definition is stored as JSON
+    with flexible filter structure.
+    """
+
+    __tablename__ = "custom_segments"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "name",
+            name="uq_custom_segment_per_tenant_name",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # Flexible JSON definition: { filters: [...], rules: [...] }
+    # Phase 1 examples:
+    #   { "aov_min": 500 }
+    #   { "aov_min": 500, "aov_max": 2000 }
+    #   { "segment_type": ["new", "returning"] }
+    definition: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="custom_segments")
+
+
+class AlertThreshold(Base):
+    """FR-107 / T-072: User-configured alert thresholds per metric per domain.
+
+    One row per tenant × metric × alert_type.
+    Stores the threshold value, comparison operator, and whether it is enabled.
+    """
+
+    __tablename__ = "alert_thresholds"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "alert_type",
+            "metric_name",
+            name="uq_alert_threshold_per_tenant_type_metric",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    alert_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    metric_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    threshold_value: Mapped[float] = mapped_column(Float, nullable=False)
+    comparison_operator: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="<"
+    )
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="alert_thresholds")
+
+
+class AlertRecipient(Base):
+    """FR-108 / T-072: Recipients for alerts (users or delivery channels).
+
+    Stores alert delivery preferences per user per channel.
+    One row per tenant × user × channel combination.
+    """
+
+    __tablename__ = "alert_recipients"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "user_id",
+            "channel",
+            name="uq_alert_recipient_per_user_channel",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    channel: Mapped[str] = mapped_column(String(20), nullable=False)
+    destination: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="alert_recipients")
+    user: Mapped[User] = relationship(back_populates="alert_recipients")
+
+
+class AlertAcknowledgement(Base):
+    """FR-122 / T-078: Track alert acknowledgement events.
+
+    Records when a user acknowledges an alert. Each alert can be
+    acknowledged by multiple users, and each user acknowledges once per alert.
+    One row per tenant × user × alert_id combination.
+    """
+
+    __tablename__ = "alert_acknowledgements"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "user_id",
+            "alert_id",
+            name="uq_alert_ack_per_tenant_user_alert",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    alert_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    alert_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    acknowledged_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="alert_acknowledgements")
+    user: Mapped[User] = relationship(back_populates="alert_acknowledgements")
+
+
+class AlertDismissal(Base):
+    """FR-122 / T-078: Track alert dismissal events.
+
+    Records when a user dismisses an alert. Each alert can be
+    dismissed by multiple users, and each user dismisses once per alert.
+    One row per tenant × user × alert_id combination.
+    """
+
+    __tablename__ = "alert_dismissals"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "user_id",
+            "alert_id",
+            name="uq_alert_dismiss_per_tenant_user_alert",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    alert_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    alert_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    dismiss_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    dismissed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="alert_dismissals")
+    user: Mapped[User] = relationship(back_populates="alert_dismissals")
+
+
+class EscalationRule(Base):
+    """FR-122 / T-078: Configure escalation rules for unacknowledged alerts.
+
+    Allows Brand Admin and Executive Owner to set up rules that automatically
+    escalate (re-notify) unacknowledged alerts after a configurable time window.
+    Example: "If early_warning alert sits unacknowledged for 6 hours,
+    re-notify Executive Owner and Growth Manager."
+    One row per tenant × alert_type × domain combination.
+    """
+
+    __tablename__ = "escalation_rules"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "alert_type",
+            "domain",
+            name="uq_escalation_rule_per_tenant_type_domain",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    alert_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    domain: Mapped[str] = mapped_column(String(100), nullable=False)
+    unacknowledged_hours: Mapped[float] = mapped_column(Float, nullable=False)
+    escalation_to_roles: Mapped[list[str] | None] = mapped_column(
+        JSON, nullable=True
+    )
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="escalation_rules")
+    created_by_user: Mapped[User | None] = relationship(
+        back_populates="created_escalation_rules",
+        foreign_keys=[created_by_user_id],
+    )
+
+
+class AlertEventLog(Base):
+    """FR-125 / T-079: Immutable audit log for all alert-related events.
+
+    Tracks creation, acknowledgement, dismissal, and escalation rule changes.
+    Every event is append-only (immutable) with actor identity and timestamp.
+    Supports querying alert history by alert_id or bulk event querying by tenant.
+    """
+
+    __tablename__ = "alert_event_log"
+    __table_args__ = (
+        # Index for fast alert_id + event type lookups (history for specific alert)
+        # Index for tenant-level audits (all events in tenant for compliance)
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    alert_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    alert_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    event_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # "created", "acknowledged", "dismissed", "escalation_rule_created", etc.
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    event_data: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True
+    )  # Flexible schema for event-specific details
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="alert_event_logs")
+    actor_user: Mapped[User | None] = relationship(
+        back_populates="triggered_alert_events", foreign_keys=[actor_user_id]
+    )
+
+
+class EmailDeliveryLog(Base):
+    """FR-116 / T-079: Immutable log for all email delivery attempts.
+
+    Tracks each email send for alerts with status, retry attempts, and errors.
+    Supports email delivery auditing, retry logic, and bounce handling.
+    Append-only log with recipient, alert reference, and delivery status.
+    """
+
+    __tablename__ = "email_delivery_log"
+    __table_args__ = (
+        # Index for querying delivery status by tenant
+        # Index for user-level delivery history
+        # Index for alert-specific delivery tracking
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    alert_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    alert_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    email_address: Mapped[str] = mapped_column(
+        String(255), nullable=False
+    )  # Snapshot of email at send time
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )  # "pending", "sent", "failed", "bounced"
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error_message: Mapped[str | None] = mapped_column(
+        String(500), nullable=True
+    )  # Error details if status is "failed"
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="email_delivery_logs")
+    user: Mapped[User] = relationship(back_populates="email_deliveries")
+
+
+class Simulation(Base):
+    """FR-081, FR-087 / T-081: Three-scenario simulation (baseline/upside/downside).
+
+    Stores the output of the simulation engine: baseline (no change), upside (best case),
+    and downside (risk case) with all projected impacts.
+
+    Simulations are created automatically when a recommendation fires (rule engine
+    triggers). The simulator uses response functions and scipy.optimize to find x*
+    (the mathematical optimum) and generates three scenarios around that optimum.
+
+    One row per simulation run, persisted for audit trail and comparison.
+    """
+
+    __tablename__ = "simulations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    recommendation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("recommendations.id"), nullable=True, index=True
+    )
+    # Simulation domain: 'acquisition', 'retention', 'margin', 'inventory', 'ops', 'executive'
+    domain: Mapped[str] = mapped_column(String(30), nullable=False)
+    # Simulation type: 'auto' (fires after rule engine), 'manual' (user-triggered)
+    simulation_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="auto"
+    )
+    # Mathematical optimum found by optimizer (e.g., optimal spend level, optimal price point)
+    x_star: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # Confidence in the simulation output (reflects data freshness and signal strength)
+    confidence_level: Mapped[str] = mapped_column(String(10), nullable=False)
+    # Data freshness signal: high/medium/low (impacts confidence score)
+    data_freshness_signal: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="high"
+    )
+    # Metric completeness signal: high/medium/low (reflects data coverage)
+    metric_completeness_signal: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="high"
+    )
+    # Baseline scenario (no change)
+    baseline_scenario: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    # Upside scenario (best case)
+    upside_scenario: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    # Downside scenario (risk case)
+    downside_scenario: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    # Metadata: which response function was used, optimizer details
+    simulation_metadata: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship()
+    recommendation: Mapped[Recommendation | None] = relationship()
+
+
+class Scenario(Base):
+    """FR-081, FR-087 / T-081: Individual scenario data within a simulation.
+
+    Each simulation generates three scenarios. Scenario stores normalized data
+    about inputs, outputs, impact projections, and confidence level per scenario.
+
+    Useful for queries like "show me all upside scenarios across simulations" or
+    "compare downside scenarios for this recommendation".
+    """
+
+    __tablename__ = "scenarios"
+    __table_args__ = (
+        UniqueConstraint(
+            "simulation_id",
+            "scenario_type",
+            name="uq_scenario_per_simulation_type",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    simulation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("simulations.id"), nullable=False, index=True
+    )
+    # Scenario type: 'baseline', 'upside', 'downside'
+    scenario_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Input assumptions for this scenario (e.g., response rate, execution quality)
+    input_assumptions: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    # Computed output values (e.g., projected_roas, projected_cac, projected_margin)
+    output_metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # Impact deltas: how this scenario changes from baseline (percentage or absolute)
+    impact_deltas: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # Confidence score for this specific scenario (0.0-1.0)
+    confidence_score: Mapped[float] = mapped_column(Float, nullable=False)
+    # Rationale for this scenario (why these assumptions were chosen)
+    rationale: Mapped[str] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    simulation: Mapped[Simulation] = relationship()
+
+
+class ExportShare(Base):
+    """T-086: Scoped export sharing with permission checks.
+
+    Tracks which user shared a simulation export with which recipient.
+    Enforces permission checks at share creation time.
+    Shares are immutable once created; revocation creates audit trail.
+    """
+
+    __tablename__ = "export_shares"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "simulation_id",
+            "shared_by_user_id",
+            "shared_with_user_id",
+            name="uq_export_share_per_sim_sharer_recipient",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    simulation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("simulations.id"), nullable=False, index=True
+    )
+    shared_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    shared_with_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    # Status: 'active' or 'revoked'
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    tenant: Mapped[Tenant] = relationship()
+    simulation: Mapped[Simulation] = relationship()
+    shared_by_user: Mapped[User] = relationship(
+        foreign_keys=[shared_by_user_id]
+    )
+    shared_with_user: Mapped[User] = relationship(
+        foreign_keys=[shared_with_user_id]
+    )
+
+
+class ExportLink(Base):
+    """T-087: Signed file links and expiry management.
+
+    Stores secure, temporary download links for shared exports.
+    Each link has a signed token (proven to belong to recipient) and expiry time.
+    Links are created on-demand when a recipient needs to download the file.
+    """
+
+    __tablename__ = "export_links"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    share_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("export_shares.id"), nullable=False, index=True
+    )
+    # Signed token (URL-safe, contains share_id and timestamp info)
+    token: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
+    # When this link stops working
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # Last time this link was used to download the file
+    accessed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    share: Mapped[ExportShare] = relationship()
