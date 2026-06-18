@@ -5,7 +5,7 @@ from collections.abc import Mapping
 
 from sqlalchemy.orm import Session
 
-from app.db.models import AlertEventLog, AuditEvent
+from backend.app.db.models import AlertEventLog, AuditEvent
 
 
 def write_audit_event(

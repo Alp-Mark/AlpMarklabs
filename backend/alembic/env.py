@@ -3,12 +3,12 @@ from __future__ import annotations
 import os
 from logging.config import fileConfig
 
+from backend.app.db import models  # noqa: F401
+from backend.app.db.base import Base
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.engine import Connection
 
 from alembic import context
-from app.db import models  # noqa: F401
-from app.db.base import Base
 
 config = context.config
 

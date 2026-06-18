@@ -11,8 +11,8 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Recommendation
-from app.recommendations.lifecycle import RecommendationStatus
+from backend.app.db.models import Recommendation
+from backend.app.recommendations.lifecycle import RecommendationStatus
 
 # Thresholds for implementation gap detection
 IMPLEMENTATION_GAP_WARNING_DAYS = 14

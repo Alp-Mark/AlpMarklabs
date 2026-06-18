@@ -14,8 +14,8 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.audit import write_alert_event, write_audit_event
-from app.db.models import (
+from backend.app.audit import write_alert_event, write_audit_event
+from backend.app.db.models import (
     AcquisitionCohort,
     AlertAcknowledgement,
     AlertDismissal,
@@ -53,25 +53,25 @@ from app.db.models import (
     User,
     UserInvitation,
 )
-from app.db.session import get_db
-from app.recommendations.export import export_analysis_view
-from app.recommendations.lifecycle import (
+from backend.app.db.session import get_db
+from backend.app.recommendations.export import export_analysis_view
+from backend.app.recommendations.lifecycle import (
     InvalidTransitionError,
     RecommendationStatus,
     transition,
 )
-from app.recommendations.suppression import (
+from backend.app.recommendations.suppression import (
     lift_suppression,
     record_rejection,
 )
-from app.schemas.account import (
+from backend.app.schemas.account import (
     AccountActivationRequest,
     AccountActivationResponse,
     LoginRequest,
     LoginResponse,
     UserResponse,
 )
-from app.schemas.alert_config import (
+from backend.app.schemas.alert_config import (
     AlertRecipientCreate,
     AlertRecipientListResponse,
     AlertRecipientResponse,
@@ -81,7 +81,7 @@ from app.schemas.alert_config import (
     AlertThresholdResponse,
     AlertThresholdUpdate,
 )
-from app.schemas.alert_escalation import (
+from backend.app.schemas.alert_escalation import (
     AlertAcknowledgementCreate,
     AlertAcknowledgementResponse,
     AlertDismissalCreate,
@@ -91,12 +91,12 @@ from app.schemas.alert_escalation import (
     EscalationRuleResponse,
     EscalationRuleUpdate,
 )
-from app.schemas.alert_history import (
+from backend.app.schemas.alert_history import (
     AlertEventListResponse,
     AlertEventResponse,
     AlertHistoryResponse,
 )
-from app.schemas.analysis_view import (
+from backend.app.schemas.analysis_view import (
     AnalysisViewShareListResponse,
     AnalysisViewShareRequest,
     AnalysisViewShareResponse,
@@ -104,13 +104,13 @@ from app.schemas.analysis_view import (
     SavedAnalysisViewListResponse,
     SavedAnalysisViewResponse,
 )
-from app.schemas.annotation import (
+from backend.app.schemas.annotation import (
     AnnotationCreateRequest,
     AnnotationListResponse,
     AnnotationResponse,
 )
-from app.schemas.billing import BillingSeatResponse, BillingSeatUpdateRequest
-from app.schemas.cohort import (
+from backend.app.schemas.billing import BillingSeatResponse, BillingSeatUpdateRequest
+from backend.app.schemas.cohort import (
     AcquisitionCohortResponse,
     AcquisitionContextResponse,
     CohortComparisonRequest,
@@ -118,7 +118,7 @@ from app.schemas.cohort import (
     CohortSnapshotCreateRequest,
     CohortSnapshotResponse,
 )
-from app.schemas.connector import (
+from backend.app.schemas.connector import (
     ConnectorApiKeyConnectRequest,
     ConnectorIntegrationStatusResponse,
     ConnectorManualResyncResponse,
@@ -132,23 +132,23 @@ from app.schemas.connector import (
     ShopifyOAuthStartRequest,
     ShopifyOAuthStartResponse,
 )
-from app.schemas.custom_segment import (
+from backend.app.schemas.custom_segment import (
     CustomSegmentCreate,
     CustomSegmentListResponse,
     CustomSegmentResponse,
     CustomSegmentUpdate,
 )
-from app.schemas.delegation import (
+from backend.app.schemas.delegation import (
     DelegationRuleCreateRequest,
     DelegationRuleListResponse,
     DelegationRuleResponse,
 )
-from app.schemas.email_delivery import (
+from backend.app.schemas.email_delivery import (
     EmailDeliveryHistoryResponse,
     EmailDeliveryListResponse,
     EmailDeliveryResponse,
 )
-from app.schemas.finance import (
+from backend.app.schemas.finance import (
     CostDriverListResponse,
     CostDriverSnapshotResponse,
     CostInputCreateRequest,
@@ -167,7 +167,7 @@ from app.schemas.finance import (
     MarginDriftThresholdResponse,
     MarginDriftThresholdUpdateRequest,
 )
-from app.schemas.inventory import (
+from backend.app.schemas.inventory import (
     InventoryRiskListResponse,
     InventoryRiskThresholdCreateRequest,
     InventoryRiskThresholdListResponse,
@@ -179,46 +179,46 @@ from app.schemas.inventory import (
     StockoutImpactResponse,
     WarehouseInventoryHealthResponse,
 )
-from app.schemas.invitation import UserInviteRequest, UserInviteResponse
-from app.schemas.locale import (
+from backend.app.schemas.invitation import UserInviteRequest, UserInviteResponse
+from backend.app.schemas.locale import (
     OPS_CURRENCY_SCALE_VS_USD,
     OPS_USD_DEFAULT,
     TenantLocaleResponse,
     TenantLocaleUpdateRequest,
 )
-from app.schemas.membership import (
+from backend.app.schemas.membership import (
     MembershipResponse,
     MembershipRoleUpdateRequest,
 )
-from app.schemas.notification import (
+from backend.app.schemas.notification import (
     NotificationRouteItem,
     NotificationRoutingResponse,
     NotificationRoutingUpdateRequest,
 )
-from app.schemas.onboarding import (
+from backend.app.schemas.onboarding import (
     OnboardingChecklistItem,
     OnboardingChecklistResponse,
 )
-from app.schemas.operations import (
+from backend.app.schemas.operations import (
     OperationalImpactListResponse,
     OperationalImpactSnapshotResponse,
 )
-from app.schemas.privacy import (
+from backend.app.schemas.privacy import (
     PrivacyRequestCreateRequest,
     PrivacyRequestResponse,
     PrivacyRequestStatusUpdateRequest,
 )
-from app.schemas.recommendation import (
+from backend.app.schemas.recommendation import (
     RecommendationListResponse,
     RecommendationResponse,
     RecommendationStatusUpdateRequest,
 )
-from app.schemas.rule_threshold import (
+from backend.app.schemas.rule_threshold import (
     RuleThresholdListResponse,
     RuleThresholdResponse,
     RuleThresholdUpdateRequest,
 )
-from app.schemas.simulation import (
+from backend.app.schemas.simulation import (
     ExportLinkResponse,
     ExportShareListResponse,
     ExportShareRequest,
@@ -235,19 +235,19 @@ from app.schemas.simulation import (
     SimulationListResponse,
     SimulationResponse,
 )
-from app.schemas.simulation_inputs import (
+from backend.app.schemas.simulation_inputs import (
     ExecutiveSimulationInput,
     FinanceSimulationInput,
     GrowthSimulationInput,
     OperationsSimulationInput,
     RetentionSimulationInput,
 )
-from app.schemas.suppression import (
+from backend.app.schemas.suppression import (
     SuppressionStateListResponse,
     SuppressionStateResponse,
 )
-from app.schemas.tenant import TenantCreateRequest, TenantCreateResponse
-from app.security import (
+from backend.app.schemas.tenant import TenantCreateRequest, TenantCreateResponse
+from backend.app.security import (
     AUTH_JWT_ALGORITHM,
     AUTH_JWT_SECRET,
     AuthContext,
@@ -255,7 +255,7 @@ from app.security import (
     require_platform_roles,
     require_tenant_roles,
 )
-from app.vault import (
+from backend.app.vault import (
     VAULT_KEY_VERSION,
     encrypt_connector_secret,
     get_secret_fingerprint,
@@ -2948,7 +2948,7 @@ def get_inventory_risk(
     if status_filter is not None:
         q = q.where(InventoryRiskSnapshot.status == status_filter)
     rows = list(db.scalars(q.order_by(InventoryRiskSnapshot.sku)))
-    from app.schemas.inventory import InventoryRiskSnapshotResponse as _Resp
+    from backend.app.schemas.inventory import InventoryRiskSnapshotResponse as _Resp
 
     return InventoryRiskListResponse(
         snapshot_date=latest_date,
@@ -3645,7 +3645,7 @@ def launch_simulation_from_recommendation(
         )
 
     # Launch simulation from recommendation
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
 
     service = SimulationService(db)
 
@@ -3727,7 +3727,7 @@ def generate_narration_for_recommendation(
         )
 
     # Generate narration from recommendation
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
 
     service = SimulationService(db)
 
@@ -3771,7 +3771,7 @@ def generate_narration_for_recommendation(
         )
 
     # Build response
-    from app.schemas.simulation import Citation
+    from backend.app.schemas.simulation import Citation
 
     citations = [
         Citation(**c) if isinstance(c, dict) else c
@@ -6161,7 +6161,7 @@ def create_growth_simulation(
     }
 
     # Run simulation
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
     service = SimulationService(db)
 
     simulation = service.run_growth_simulation(
@@ -6209,7 +6209,7 @@ def create_retention_simulation(
         )
 
     # Run simulation
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
     service = SimulationService(db)
 
     simulation = service.run_retention_simulation(
@@ -6260,7 +6260,7 @@ def create_finance_simulation(
     }
 
     # Run simulation
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
     service = SimulationService(db)
 
     simulation = service.run_finance_simulation(
@@ -6307,7 +6307,7 @@ def create_operations_simulation(
         )
 
     # Run simulation
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
     service = SimulationService(db)
 
     simulation = service.run_operations_simulation(
@@ -6354,7 +6354,7 @@ def create_executive_simulation(
         )
 
     # Run simulation
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
     service = SimulationService(db)
 
     simulation = service.run_executive_simulation(
@@ -6396,7 +6396,7 @@ def compare_simulations(
         404: If tenant or any simulation not found
         422: If fewer than 2 simulations provided
     """
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
     service = SimulationService(db)
 
     comparison = service.get_simulation_comparison(
@@ -6441,7 +6441,7 @@ def get_simulation_detail(
             detail="Tenant not found.",
         )
 
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
     service = SimulationService(db)
 
     simulation, scenarios = service.get_simulation_with_scenarios(
@@ -6497,7 +6497,7 @@ def list_simulations_for_tenant(
             detail="Tenant not found.",
         )
 
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
     service = SimulationService(db)
 
     simulations, total_count = service.list_simulations(
@@ -6548,7 +6548,7 @@ def export_simulation(
             detail="Tenant not found.",
         )
 
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
     service = SimulationService(db)
 
     try:
@@ -6622,7 +6622,7 @@ def share_simulation_export(
             detail="Tenant not found.",
         )
 
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
     service = SimulationService(db)
 
     try:
@@ -6734,7 +6734,7 @@ def list_shared_exports(
             detail="User not found.",
         )
 
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
     service = SimulationService(db)
 
     shares, total = service.get_shared_exports_with_me(
@@ -6805,7 +6805,7 @@ def revoke_export_share(
             detail="Tenant not found.",
         )
 
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
     service = SimulationService(db)
 
     try:
@@ -6874,7 +6874,7 @@ def generate_export_download_link(
             detail="Tenant not found.",
         )
 
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
     service = SimulationService(db)
 
     try:
@@ -6937,7 +6937,7 @@ def download_export_by_link(
     """
     from itsdangerous import BadSignature, SignatureExpired
 
-    from app.simulation_service import SimulationService
+    from backend.app.simulation_service import SimulationService
 
     service = SimulationService(db)
 

@@ -22,7 +22,7 @@ from datetime import date, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import RecommendationSuppressionState
+from backend.app.db.models import RecommendationSuppressionState
 
 
 def is_suppressed(

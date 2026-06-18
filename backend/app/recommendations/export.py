@@ -8,7 +8,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.db.models import Recommendation, SavedAnalysisView
+from backend.app.db.models import Recommendation, SavedAnalysisView
 
 
 def export_analysis_view(

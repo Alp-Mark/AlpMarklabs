@@ -1,2 +1,2 @@
-web: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
-release: cd backend && alembic upgrade head
+web: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+release: alembic -c backend/alembic.ini upgrade head
