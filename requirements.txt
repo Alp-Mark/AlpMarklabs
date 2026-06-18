@@ -1,1 +1,15 @@
--r backend/requirements.txt
+# Railway/Railpack builds from the repo root and installs dependencies before
+# the rest of the source is copied, so this file must list deps directly
+# (a `-r backend/requirements.txt` reference fails at that build stage).
+# Keep this in sync with backend/requirements.txt.
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+psycopg[binary]
+PyJWT
+cryptography
+reportlab
+python-dateutil
+itsdangerous
+openai
