@@ -15,3 +15,25 @@ class AccountActivationResponse(BaseModel):
     email: str
     role: str
     activated_at: datetime
+
+
+class UserResponse(BaseModel):
+    """Response for GET /users/me endpoint."""
+
+    email: str
+    platform_role: str
+    tenant_id: str | None = None
+
+
+class LoginRequest(BaseModel):
+    """Request for POST /auth/login endpoint."""
+
+    email: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    """Response for POST /auth/login endpoint."""
+
+    access_token: str
+    token_type: str = "bearer"

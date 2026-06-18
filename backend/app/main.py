@@ -7,7 +7,9 @@ from typing import Annotated, TypedDict
 from urllib.parse import urlencode
 from uuid import UUID
 
+import jwt
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -65,6 +67,9 @@ from backend.app.recommendations.suppression import (
 from backend.app.schemas.account import (
     AccountActivationRequest,
     AccountActivationResponse,
+    LoginRequest,
+    LoginResponse,
+    UserResponse,
 )
 from backend.app.schemas.alert_config import (
     AlertRecipientCreate,
@@ -243,6 +248,8 @@ from backend.app.schemas.suppression import (
 )
 from backend.app.schemas.tenant import TenantCreateRequest, TenantCreateResponse
 from backend.app.security import (
+    AUTH_JWT_ALGORITHM,
+    AUTH_JWT_SECRET,
     AuthContext,
     get_current_auth,
     require_platform_roles,
@@ -255,6 +262,19 @@ from backend.app.vault import (
 )
 
 app = FastAPI(title="AlpMark Backend", version="0.1.0")
+
+# Add CORS middleware to allow frontend requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+    ],  # Frontend dev servers
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 ALLOWED_MEMBER_ROLES = {
     "brand_admin",
     "executive_owner",
@@ -641,6 +661,52 @@ def _build_billing_seat_response(db: Session, tenant: Tenant) -> BillingSeatResp
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/auth/login", response_model=LoginResponse)
+def login(request: LoginRequest) -> LoginResponse:
+    """Generate a JWT token for development/demo purposes."""
+    # For demo: accept any email with any password
+    # In production, verify credentials against database
+    payload = {
+        "sub": request.email,
+        "email": request.email,
+        "platform_role": "super_admin",
+        "iat": datetime.now(UTC),
+        "exp": datetime.now(UTC) + timedelta(hours=24),
+    }
+    token = jwt.encode(payload, AUTH_JWT_SECRET, algorithm=AUTH_JWT_ALGORITHM)
+    return LoginResponse(access_token=token, token_type="bearer")
+
+
+@app.get("/users/me", response_model=UserResponse)
+def get_current_user(
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> UserResponse:
+    """Get current authenticated user's info."""
+    # Try to get the user's tenant membership from database
+    try:
+        user_id = db.scalar(select(User.id).where(User.email == auth.email))
+        if user_id:
+            membership = db.scalar(
+                select(TenantMembership)
+                .where(TenantMembership.user_id == user_id)
+                .order_by(TenantMembership.created_at)
+            )
+            tenant_id = str(membership.tenant_id) if membership else None
+        else:
+            tenant_id = None
+    except Exception:
+        # If database lookup fails, return info from JWT token
+        # (useful for dev/demo environments)
+        tenant_id = None
+
+    return UserResponse(
+        email=auth.email,
+        platform_role=auth.platform_role or "member",
+        tenant_id=tenant_id,
+    )
 
 
 # ---------------------------------------------------------------------------
