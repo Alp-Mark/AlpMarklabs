@@ -263,13 +263,22 @@ from backend.app.vault import (
 
 app = FastAPI(title="AlpMark Backend", version="0.1.0")
 
-# Add CORS middleware to allow frontend requests
+# Add CORS middleware to allow frontend requests.
+# Origins are configurable via CORS_ALLOW_ORIGINS (comma-separated) so new
+# frontend deployments can be allow-listed without a code change.
+_DEFAULT_CORS_ORIGINS = (
+    "http://localhost:3000,"
+    "http://localhost:3001,"
+    "https://alpmark-labs-dev.replit.app"
+)
+_CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOW_ORIGINS", _DEFAULT_CORS_ORIGINS).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-    ],  # Frontend dev servers
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
