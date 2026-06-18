@@ -3,12 +3,12 @@ from __future__ import annotations
 import os
 from logging.config import fileConfig
 
-from app.db import models  # noqa: F401
-from app.db.base import Base
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.engine import Connection
 
 from alembic import context
+from app.db import models  # noqa: F401
+from app.db.base import Base
 
 config = context.config
 
@@ -17,10 +17,20 @@ if config.config_file_name is not None:
 
 
 def get_database_url() -> str:
-    return os.getenv(
+    url = os.getenv(
         "DATABASE_URL",
         "postgresql+psycopg://alpmark:alpmark@localhost:5432/alpmark",
     )
+    # Hosts like Railway provide "postgresql://" / "postgres://" URLs, which
+    # SQLAlchemy maps to psycopg2. This app uses psycopg (v3), so force the
+    # "+psycopg" driver suffix.
+    if url.startswith("postgresql+"):
+        return url
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url[len("postgresql://") :]
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url[len("postgres://") :]
+    return url
 
 
 config.set_main_option("sqlalchemy.url", get_database_url())
