@@ -18,7 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
-from backend.app.db.base import Base
+from app.db.base import Base
 
 
 def _default_invitation_expiry() -> datetime:

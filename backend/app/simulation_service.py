@@ -39,7 +39,7 @@ from scipy.optimize import minimize
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.app.db.models import (
+from app.db.models import (
     ExportLink,
     ExportShare,
     Recommendation,
@@ -48,7 +48,7 @@ from backend.app.db.models import (
     Tenant,
     User,
 )
-from backend.app.utils.token_signing import ExportLinkTokenSigner
+from app.utils.token_signing import ExportLinkTokenSigner
 
 if TYPE_CHECKING:
     pass
@@ -1091,7 +1091,7 @@ class SimulationService:
             )
 
         # Verify recipient is in same tenant
-        from backend.app.db.models import TenantMembership
+        from app.db.models import TenantMembership
         recipient_membership = db.scalar(
             select(TenantMembership).where(
                 TenantMembership.tenant_id == tenant_id,

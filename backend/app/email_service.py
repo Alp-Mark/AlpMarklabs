@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from backend.app.db.models import EmailDeliveryLog
+from app.db.models import EmailDeliveryLog
 
 # Retry configuration: max 3 attempts with exponential backoff
 RETRY_ATTEMPTS = 3

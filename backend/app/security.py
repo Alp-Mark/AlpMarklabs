@@ -14,8 +14,8 @@ from jwt.types import Options
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.app.db.models import Tenant, TenantMembership, User
-from backend.app.db.session import get_db
+from app.db.models import Tenant, TenantMembership, User
+from app.db.session import get_db
 
 AUTH_JWT_SECRET = os.getenv(
     "AUTH_JWT_SECRET",

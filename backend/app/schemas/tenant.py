@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from backend.app.schemas.locale import _SUPPORTED_CURRENCIES
+from app.schemas.locale import _SUPPORTED_CURRENCIES
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 

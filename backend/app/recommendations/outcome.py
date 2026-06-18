@@ -12,8 +12,8 @@ from datetime import UTC, date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.app.db.models import Recommendation
-from backend.app.recommendations.lifecycle import RecommendationStatus
+from app.db.models import Recommendation
+from app.recommendations.lifecycle import RecommendationStatus
 
 # Configurable observation window after implementation
 OUTCOME_OBSERVATION_WINDOW_DAYS = 30
