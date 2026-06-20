@@ -63,6 +63,7 @@ from backend.app.db.models import (  # noqa: E402
     User,
 )
 from backend.app.db.session import SessionLocal  # noqa: E402
+from backend.app.password import hash_password  # noqa: E402
 from sqlalchemy import delete, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
@@ -74,6 +75,9 @@ TENANT_NAME = "one8"
 TENANT_SLUG = "one8"
 OWNER_EMAIL = "owner@one8.com"
 OWNER_NAME = "one8 Owner"
+
+# Demo password for all seeded users (IMPORTANT: Change in production!)
+DEMO_PASSWORD = "password123"
 
 # Phase F: Executive Owner role so the owner sees all dashboard sections.
 OWNER_ROLE = "executive_owner"
@@ -1007,10 +1011,14 @@ def seed() -> None:
                 email=OWNER_EMAIL,
                 full_name=OWNER_NAME,
                 is_active=True,
+                password_hash=hash_password(DEMO_PASSWORD),
             )
             db.add(user)
         else:
             user.is_active = True
+            # Update password_hash if it's missing (for existing users)
+            if not user.password_hash:
+                user.password_hash = hash_password(DEMO_PASSWORD)
         db.flush()  # ensure user.id is available
 
         # 3) Membership granting executive_owner on this tenant.
@@ -1071,7 +1079,7 @@ def seed() -> None:
         print(f"  Tenant id (VITE_PYTHON_API_TENANT): {TENANT_ID}")
         print(f"  Owner email (VITE_PYTHON_API_EMAIL): {OWNER_EMAIL}")
         print(f"  Owner role: {OWNER_ROLE}")
-        print("  Password (VITE_PYTHON_API_PASSWORD): any non-empty value")
+        print(f"  Password (VITE_PYTHON_API_PASSWORD): {DEMO_PASSWORD}")
         print(f"  Base currency: {CURRENCY} ({LOCALE})")
         print(f"  History days: {HISTORY_DAYS}")
         print(f"  Rows inserted: {len(rows):,}")
