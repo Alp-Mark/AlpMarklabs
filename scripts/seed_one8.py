@@ -56,6 +56,7 @@ from backend.app.db.models import (  # noqa: E402
     MarginDriftSnapshot,
     OperationalImpactSnapshot,
     Recommendation,
+    Role,
     Scenario,
     Simulation,
     Tenant,
@@ -1022,6 +1023,20 @@ def seed() -> None:
         db.flush()  # ensure user.id is available
 
         # 3) Membership granting executive_owner on this tenant.
+        # After migration 0058, roles are FK-based (role_id), not string-based (role).
+        exec_owner_role = db.scalar(
+            select(Role).where(
+                Role.tenant_id == TENANT_ID,
+                Role.name == OWNER_ROLE,
+                Role.is_system == True,
+            )
+        )
+        if not exec_owner_role:
+            raise RuntimeError(
+                f"System role '{OWNER_ROLE}' not found for tenant {TENANT_ID}. "
+                "Run migration 0058 first to create system roles."
+            )
+        
         membership = db.scalar(
             select(TenantMembership).where(
                 TenantMembership.tenant_id == TENANT_ID,
@@ -1033,11 +1048,13 @@ def seed() -> None:
                 TenantMembership(
                     tenant_id=TENANT_ID,
                     user_id=user.id,
-                    role=OWNER_ROLE,
+                    role=OWNER_ROLE,  # Keep for backward compat
+                    role_id=exec_owner_role.id,  # New FK-based role
                 )
             )
         else:
             membership.role = OWNER_ROLE
+            membership.role_id = exec_owner_role.id
 
         # 4) Replace per-tenant demo data.
         _delete_existing_demo_data(db)
