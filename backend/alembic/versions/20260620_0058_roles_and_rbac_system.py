@@ -5,6 +5,7 @@ Revises: 0057
 Create Date: 2026-06-20
 
 """
+import json
 import uuid
 
 import sqlalchemy as sa
@@ -126,7 +127,7 @@ def upgrade() -> None:
                     "id": role_id,
                     "tenant_id": tenant_id,
                     "name": role_name,
-                    "permissions": sa.func.jsonb_build_array(*permissions) if permissions else sa.func.jsonb_build_array()
+                    "permissions": json.dumps(permissions)
                 }
             )
     
