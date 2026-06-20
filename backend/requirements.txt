@@ -5,6 +5,7 @@ alembic
 psycopg[binary]
 PyJWT
 cryptography
+bcrypt
 reportlab
 python-dateutil
 itsdangerous

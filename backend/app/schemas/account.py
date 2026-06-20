@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 class AccountActivationRequest(BaseModel):
     token: str = Field(min_length=8, max_length=128)
     full_name: str = Field(min_length=1, max_length=255)
+    password: str = Field(min_length=8, max_length=72)
 
 
 class AccountActivationResponse(BaseModel):
@@ -37,3 +38,54 @@ class LoginResponse(BaseModel):
 
     access_token: str
     token_type: str = "bearer"
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Request for POST /auth/forgot-password endpoint."""
+
+    email: str = Field(min_length=3, max_length=320)
+
+
+class ForgotPasswordResponse(BaseModel):
+    """Response for POST /auth/forgot-password endpoint."""
+
+    message: str
+
+
+class ResetPasswordRequest(BaseModel):
+    """Request for POST /auth/reset-password endpoint."""
+
+    token: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=8, max_length=72)
+
+
+class ResetPasswordResponse(BaseModel):
+    """Response for POST /auth/reset-password endpoint."""
+
+    message: str
+
+
+class UserSessionResponse(BaseModel):
+    """Response for user session information."""
+
+    id: uuid.UUID
+    jti: str
+    ip_address: str | None
+    user_agent: str | None
+    created_at: datetime
+    last_seen_at: datetime | None
+    expires_at: datetime
+    is_current: bool
+
+
+class SessionListResponse(BaseModel):
+    """Response for GET /me/sessions endpoint."""
+
+    sessions: list[UserSessionResponse]
+
+
+class LogoutResponse(BaseModel):
+    """Response for logout endpoints."""
+
+    message: str
+

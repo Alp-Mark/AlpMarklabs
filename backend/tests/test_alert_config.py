@@ -11,7 +11,7 @@ from collections.abc import Generator
 import jwt
 import pytest
 from backend.app.db.base import Base
-from backend.app.db.models import Tenant, TenantMembership, User
+from backend.app.db.models import Role, Tenant, TenantMembership, User
 from backend.app.db.session import get_db
 from backend.app.main import app
 from backend.app.security import AUTH_JWT_ALGORITHM, AUTH_JWT_SECRET
@@ -56,15 +56,44 @@ def test_client(db_session: Session) -> Generator[TestClient]:
     db_session.add(tenant)
     db_session.flush()
 
+    # Seed system roles for tenant
+    import uuid
+
+    from backend.app.permissions import get_system_role_permissions
+    
+    system_role_names = [
+        "brand_admin",
+        "executive_owner",
+        "growth_performance_manager",
+        "retention_crm_manager",
+        "finance_controller",
+        "operations_inventory_manager",
+    ]
+    roles_map = {}
+    for role_name in system_role_names:
+        permissions = get_system_role_permissions(role_name)
+        role = Role(
+            id=uuid.uuid4(),
+            tenant_id=tenant.id,
+            name=role_name,
+            permissions=permissions,
+            is_system=True,
+        )
+        db_session.add(role)
+        roles_map[role_name] = role
+    db_session.flush()
+
     user = User(email="test@example.com", full_name="Test User", is_active=True)
     db_session.add(user)
     db_session.flush()
 
-    # Create tenant membership with operations_manager role
+    # Create membership with operations_inventory_manager
+    ops_role = roles_map["operations_inventory_manager"]
     membership = TenantMembership(
         tenant_id=tenant.id,
         user_id=user.id,
-        role="operations_manager",
+        role="operations_inventory_manager",
+        role_id=ops_role.id,
     )
     db_session.add(membership)
     db_session.commit()

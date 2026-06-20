@@ -26,9 +26,9 @@ def test_status_values_match_db_strings() -> None:
     assert RecommendationStatus.OUTCOME_OBSERVED.value == "outcome_observed"
 
 
-def test_all_six_statuses_exist() -> None:
-    """Exactly six statuses are defined."""
-    assert len(RecommendationStatus) == 6
+def test_all_eight_statuses_exist() -> None:
+    """Exactly eight statuses are defined (6 original + 2 E1 additions)."""
+    assert len(RecommendationStatus) == 8
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +49,8 @@ def test_non_terminal_statuses_not_in_terminal_set() -> None:
         if status in (
             RecommendationStatus.REJECTED,
             RecommendationStatus.OUTCOME_OBSERVED,
+            RecommendationStatus.EXPIRED,
+            RecommendationStatus.ARCHIVED,
         ):
             continue
         assert status not in TERMINAL_STATUSES

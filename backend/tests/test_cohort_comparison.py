@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Generator
-from uuid import UUID
 
 import jwt
 import pytest
 from backend.app.db.base import Base
+from backend.app.db.models import Role, TenantMembership, User
 from backend.app.db.session import get_db
 from backend.app.main import app
 from backend.app.security import AUTH_JWT_ALGORITHM, AUTH_JWT_SECRET
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -57,16 +58,48 @@ def _headers(email: str = "test@example.com", role: str = "super_admin") -> dict
     return {"Authorization": f"Bearer {_token(email, role)}"}
 
 
-def _create_tenant(client: TestClient, slug: str, email: str) -> UUID:
-    """Create a tenant and return tenant_id."""
-    response = client.post(
+def _create_tenant(client: TestClient, slug: str, email: str) -> str:
+    resp = client.post(
         "/tenants",
-        json={"name": "Test Tenant", "slug": slug},
+        json={"name": slug, "slug": slug},
         headers=_headers(email),
     )
-    assert response.status_code == 201
-    return UUID(response.json()["id"])
-
+    assert resp.status_code == 201
+    tenant_id = resp.json()["id"]
+    
+    # Note: System roles are now seeded automatically by POST /tenants endpoint
+    # Note: TenantMembership for creator is created with brand_admin role
+    
+    # Upgrade to operations_inventory_manager (has all permissions)
+    db_gen = app.dependency_overrides[get_db]()
+    db = next(db_gen)
+    try:
+        # Get the operations_inventory_manager role for this tenant
+        ops_role = db.scalar(
+            select(Role).where(
+                Role.tenant_id == uuid.UUID(tenant_id),
+                Role.name == "operations_inventory_manager",
+                Role.is_system,
+            )
+        )
+        
+        # Update the membership to use operations_inventory_manager role
+        membership = db.scalar(
+            select(TenantMembership)
+            .join(User, TenantMembership.user_id == User.id)
+            .where(
+                TenantMembership.tenant_id == uuid.UUID(tenant_id),
+                User.email == email,
+            )
+        )
+        if membership and ops_role:
+            membership.role = "operations_inventory_manager"
+            membership.role_id = ops_role.id
+            db.commit()
+    finally:
+        db.close()
+    
+    return tenant_id
 
 class TestCohortSnapshotCRUD:
     """Test create and list cohort snapshots."""

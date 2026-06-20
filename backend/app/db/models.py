@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -180,6 +181,7 @@ class Tenant(Base):
     simulations: Mapped[list[Simulation]] = relationship(
         back_populates="tenant"
     )
+    roles: Mapped[list[Role]] = relationship(back_populates="tenant")
 
 
 class User(Base):
@@ -188,7 +190,13 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    is_platform_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -214,6 +222,37 @@ class User(Base):
     email_deliveries: Mapped[list[EmailDeliveryLog]] = relationship(
         back_populates="user"
     )
+    sessions: Mapped[list[UserSession]] = relationship(back_populates="user")
+
+
+class Role(Base):
+    __tablename__ = "roles"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_role_tenant_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    permissions: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    is_system: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="roles")
+    memberships: Mapped[list[TenantMembership]] = relationship(
+        back_populates="role_obj"
+    )
 
 
 class TenantMembership(Base):
@@ -229,6 +268,9 @@ class TenantMembership(Base):
         ForeignKey("tenants.id"), nullable=False
     )
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    role_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("roles.id"), nullable=True, index=True
+    )
     role: Mapped[str] = mapped_column(
         String(50), nullable=False, default="growth_performance_manager"
     )
@@ -238,6 +280,7 @@ class TenantMembership(Base):
 
     tenant: Mapped[Tenant] = relationship(back_populates="memberships")
     user: Mapped[User] = relationship(back_populates="memberships")
+    role_obj: Mapped[Role | None] = relationship(back_populates="memberships")
 
 
 class UserInvitation(Base):
@@ -261,6 +304,59 @@ class UserInvitation(Base):
     )
 
     tenant: Mapped[Tenant] = relationship(back_populates="invitations")
+
+
+def _default_password_reset_expiry() -> datetime:
+    """Default password reset token expiry: 24 hours from now."""
+    return datetime.now(UTC) + timedelta(hours=24)
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    token: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_default_password_reset_expiry
+    )
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+def _default_session_expiry() -> datetime:
+    """Default session expiry: 30 days from now."""
+    return datetime.now(UTC) + timedelta(days=30)
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id"), nullable=False, index=True
+    )
+    jti: Mapped[str] = mapped_column(String(36), unique=True, nullable=False)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_default_session_expiry
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    user: Mapped[User] = relationship(back_populates="sessions")
 
 
 class NotificationRoutingSetting(Base):
@@ -338,6 +434,15 @@ class PrivacyRequest(Base):
 
 
 class ConnectorIntegration(Base):
+    """FR-014 to FR-017 / T-014 to T-017: External data source integrations.
+
+    Represents connections to Shopify, Meta, Google Ads, and other third-party
+    platforms. Each tenant can have one connector per source.
+
+    E3: Added health_status field (healthy/degraded/critical/unknown) to track
+    overall connector health based on sync progress, data freshness, and errors.
+    """
+
     __tablename__ = "connector_integrations"
     __table_args__ = (
         UniqueConstraint("tenant_id", "source", name="uq_connector_per_tenant_source"),
@@ -353,6 +458,10 @@ class ConnectorIntegration(Base):
         String(30),
         nullable=False,
         default="disconnected",
+    )
+    # E3: Health status derived from sync/freshness/errors
+    health_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="unknown"
     )
     shop_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
     oauth_state: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -1484,9 +1593,19 @@ class Recommendation(Base):
     prevents duplicate recommendations if the job runs more than once in
     a day.
 
-    Status lifecycle (cross-cutting rule 2):
+    Status lifecycle (cross-cutting rule 2 + E1 extensions):
         new → reviewed → approved → rejected
             → implemented_externally → outcome_observed
+        Additional E1 states:
+            - expired: recommendation no longer relevant
+            - archived: removed from active view but preserved
+    
+    Confidence level (E1): Structured 5-level enum mapped from confidence_score:
+        - very_low (0.0-0.3): Low signal quality or stale data
+        - low (0.3-0.5): Moderate signal with gaps
+        - medium (0.5-0.7): Solid signal, some uncertainty
+        - high (0.7-0.9): Strong signal, high data quality
+        - very_high (0.9-1.0): Very strong signal, fresh comprehensive data
     """
 
     __tablename__ = "recommendations"
@@ -1518,6 +1637,11 @@ class Recommendation(Base):
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     impact_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # E1: Numeric confidence score (0-1 scale) and data source tracking
+    confidence_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    data_sources: Mapped[list] = mapped_column(
+        JSON, nullable=False, server_default="[]"
+    )
     review_note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     # FR-076 / T-062: Stamps when recommendation transitions to "approved" status.
     approved_at: Mapped[datetime | None] = mapped_column(
@@ -2266,6 +2390,12 @@ class Simulation(Base):
     (the mathematical optimum) and generates three scenarios around that optimum.
 
     One row per simulation run, persisted for audit trail and comparison.
+    
+    E2 additions:
+    - name: User-provided label for simulation identification
+    - description: User notes about simulation purpose/context
+    - is_deleted: Soft delete flag (preserves audit trail)
+    - updated_at: Timestamp for rename/edit tracking
     """
 
     __tablename__ = "simulations"
@@ -2277,6 +2407,9 @@ class Simulation(Base):
     recommendation_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("recommendations.id"), nullable=True, index=True
     )
+    # E2: User-provided name and description
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     # Simulation domain: 'acquisition', 'retention', 'margin', 'inventory', 'ops',
     # 'executive'
     domain: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -2314,12 +2447,159 @@ class Simulation(Base):
     simulation_metadata: Mapped[dict] = mapped_column(
         JSON, nullable=False, default=dict
     )
+    # E2: Soft delete flag (preserves audit trail)
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # E2: Updated timestamp for rename/edit tracking
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
     tenant: Mapped[Tenant] = relationship()
     recommendation: Mapped[Recommendation | None] = relationship()
+
+
+class SupportTicket(Base):
+    """E4: Support ticket lifecycle management (FR-092, FR-093, FR-099-101).
+
+    Tracks support tickets for tenant issues with assignment, resolution,
+    and closure workflow.
+    """
+
+    __tablename__ = "support_tickets"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="open"
+    )  # open, in_progress, resolved, closed, escalated
+    priority: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="medium"
+    )  # low, medium, high, urgent
+    issue_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # integration_failure, sync_error, onboarding_help, etc.
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    assigned_to_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    internal_notes: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # FR-099: Internal support notes
+    resolution_summary: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # FR-100: Resolution summary
+    resolution_category: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )  # FR-100: Root cause category
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class UserNotificationPreference(Base):
+    """E5: User-level notification preferences (FR-007, FR-108).
+
+    Controls which alert categories a user receives and via which channels.
+    """
+
+    __tablename__ = "user_notification_preferences"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "tenant_id",
+            "alert_category",
+            name="uq_user_notification_preference_per_category",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    alert_category: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # kpi_drift, stockout_risk, churn_risk, sync_failure, etc.
+    channel: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="both"
+    )  # in_app, email, both
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class Notification(Base):
+    """E5: In-app notification inbox (FR-123, FR-124, FR-125).
+
+    Tracks individual notifications sent to users with read/dismiss workflow.
+    """
+
+    __tablename__ = "notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    notification_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # Alert type
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="info"
+    )  # info, warning, critical
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="unread"
+    )  # unread, read, dismissed
+    deep_link: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    context_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dismissed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
 
 
 class Scenario(Base):
@@ -2448,3 +2728,134 @@ class ExportLink(Base):
     )
 
     share: Mapped[ExportShare] = relationship()
+
+
+class SubscriptionPlan(Base):
+    """Phase D / D1: Subscription plan definitions.
+
+    Defines available subscription tiers with pricing, features, and limits.
+    Tenants reference these via Tenant.billing_plan (slug match).
+    Super-admins can create/update plans via platform admin endpoints.
+    """
+
+    __tablename__ = "subscription_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    # URL-safe identifier (e.g., "starter", "professional", "enterprise")
+    slug: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    # Display name shown to users
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Marketing description
+    description: Mapped[str] = mapped_column(String(500), nullable=False)
+    # Pricing (USD, can extend to multi-currency later)
+    price_monthly: Mapped[float] = mapped_column(Float, nullable=False)
+    price_annual: Mapped[float] = mapped_column(Float, nullable=False)
+    # Feature flags enabled for this plan (JSON array of feature slugs)
+    # Example: ["simulations", "advanced_analytics", "api_access"]
+    features: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
+    # Plan limits (JSON object)
+    # Example: {"seat_limit": 5, "connector_limit": 3, "api_rate_limit": 1000}
+    limits: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # Whether plan is available for new signups
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Display order (lower = shown first)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class FeatureFlag(Base):
+    """Phase D / D2: Global feature flag definitions.
+
+    Defines available feature flags that can be enabled/disabled per tenant.
+    Used for plan-based features, beta features, and gradual rollouts.
+    """
+
+    __tablename__ = "feature_flags"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    # URL-safe identifier (e.g., "simulations", "advanced_analytics")
+    slug: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    # Display name
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Description of what this feature enables
+    description: Mapped[str] = mapped_column(String(500), nullable=False)
+    # Category for grouping (e.g., "analytics", "integrations", "platform")
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Whether this flag is available for use (admin can disable flags globally)
+    is_available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Default state for new tenants
+    default_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant_overrides: Mapped[list[TenantFeatureFlag]] = relationship(
+        back_populates="feature_flag"
+    )
+
+
+class TenantFeatureFlag(Base):
+    """Phase D / D2: Per-tenant feature flag overrides.
+
+    Allows enabling/disabling specific features for individual tenants,
+    overriding subscription plan defaults.
+    """
+
+    __tablename__ = "tenant_feature_flags"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "feature_flag_slug",
+            name="uq_tenant_feature_flag",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    feature_flag_slug: Mapped[str] = mapped_column(
+        ForeignKey("feature_flags.slug"), nullable=False, index=True
+    )
+    # Whether this feature is enabled for this tenant
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    # When it was enabled/disabled
+    enabled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    disabled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Who made the change (for audit trail)
+    changed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship()
+    feature_flag: Mapped[FeatureFlag] = relationship(back_populates="tenant_overrides")
+    changed_by_user: Mapped[User | None] = relationship()

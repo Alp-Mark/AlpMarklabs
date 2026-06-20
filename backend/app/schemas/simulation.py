@@ -36,11 +36,16 @@ class SimulationResponse(BaseModel):
 
     Returned when retrieving a simulation run. Contains baseline, upside,
     and downside scenarios along with metadata about the simulation.
+    
+    E2 additions: name, description, is_deleted, updated_at for
+    rename/duplicate/delete operations.
     """
 
     id: UUID
     tenant_id: UUID
     recommendation_id: UUID | None
+    name: str | None = Field(None, description="User-provided simulation name")
+    description: str | None = Field(None, description="User notes about simulation")
     domain: str
     simulation_type: str
     x_star: dict
@@ -51,7 +56,9 @@ class SimulationResponse(BaseModel):
     upside_scenario: dict
     downside_scenario: dict
     simulation_metadata: dict
+    is_deleted: bool = Field(default=False, description="Soft delete flag")
     created_at: datetime
+    updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -253,6 +260,41 @@ class GeneratedExportLinkResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# ---------------------------------------------------------------------------
+# E2: Simulation rename/duplicate/delete schemas
+# ---------------------------------------------------------------------------
+
+
+class SimulationUpdateRequest(BaseModel):
+    """Request body for updating simulation name/description (E2 rename)."""
+
+    name: str | None = Field(None, max_length=255, description="Simulation name")
+    description: str | None = Field(None, description="Simulation description/notes")
+
+
+class SimulationDuplicateRequest(BaseModel):
+    """Request body for duplicating a simulation (E2 duplicate)."""
+
+    name: str | None = Field(
+        None,
+        max_length=255,
+        description="Name for duplicated simulation (defaults to 'Copy of <original>')",
+    )
+    description: str | None = Field(
+        None, description="Description for duplicated simulation"
+    )
+
+
+class SimulationDuplicateResponse(BaseModel):
+    """Response for simulation duplication."""
+
+    original_id: UUID = Field(description="ID of original simulation")
+    duplicate_id: UUID = Field(description="ID of newly created duplicate")
+    duplicate: SimulationResponse = Field(description="Full duplicated simulation")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # ========== T-117: Recommendation-to-Simulation Launch ==========
 
 
@@ -399,6 +441,141 @@ class NarrationResponse(BaseModel):
     )
     generated_at: datetime = Field(
         description="Timestamp when narration was generated"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ========== E7: Simulation Chart-Ready Data ==========
+
+
+class TimeSeriesDataPoint(BaseModel):
+    """Single data point in a time-series chart.
+
+    E7: Provides structured data for time-series projections across scenarios.
+    Frontend can render line charts showing baseline/upside/downside trends
+    over projected time periods.
+    """
+
+    period_index: int = Field(
+        description="Time period index (0=now, 1=period 1, etc.)"
+    )
+    period_label: str = Field(
+        description="Human-readable period label (e.g., 'Week 1', 'Day 7')"
+    )
+    baseline_value: float | None = Field(
+        description="Metric value in baseline scenario"
+    )
+    upside_value: float | None = Field(
+        description="Metric value in upside scenario"
+    )
+    downside_value: float | None = Field(
+        description="Metric value in downside scenario"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WaterfallSegment(BaseModel):
+    """Single segment in a waterfall chart.
+
+    E7: Shows how baseline value changes through intermediate steps to reach
+    final value. Useful for showing contribution breakdown (e.g., baseline → 
+    channel reallocation → pricing change → final outcome).
+    """
+
+    segment_label: str = Field(
+        description="Segment name (e.g., 'Baseline', 'Channel shift', 'Final')"
+    )
+    segment_type: str = Field(
+        description="Type: 'start', 'increase', 'decrease', 'end'"
+    )
+    value: float = Field(
+        description="Segment value (absolute or delta depending on type)"
+    )
+    cumulative_value: float = Field(
+        description="Running total after this segment"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MetricDeltaBar(BaseModel):
+    """Single metric comparison bar across scenarios.
+
+    E7: Shows side-by-side comparison of a metric across baseline/upside/downside.
+    Frontend can render grouped bar charts or delta visualizations.
+    """
+
+    metric_name: str = Field(
+        description="Metric being compared (e.g., 'ROAS', 'Margin %', 'CAC')"
+    )
+    metric_unit: str = Field(
+        description="Unit for display (e.g., '%', '$', 'days')"
+    )
+    baseline_value: float | None = Field(
+        description="Baseline scenario value"
+    )
+    upside_value: float | None = Field(
+        description="Upside scenario value"
+    )
+    upside_delta: float | None = Field(
+        description="Change from baseline to upside (upside - baseline)"
+    )
+    upside_delta_pct: float | None = Field(
+        description="Percentage change from baseline to upside"
+    )
+    downside_value: float | None = Field(
+        description="Downside scenario value"
+    )
+    downside_delta: float | None = Field(
+        description="Change from baseline to downside (downside - baseline)"
+    )
+    downside_delta_pct: float | None = Field(
+        description="Percentage change from baseline to downside"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SimulationChartDataResponse(BaseModel):
+    """Chart-ready data for frontend visualization of a simulation.
+
+    E7: Provides three structured data formats optimized for chart libraries:
+    - time_series: Line charts showing metric trends over time
+    - waterfall: Waterfall charts showing contribution breakdown
+    - metric_deltas: Bar charts comparing metrics across scenarios
+    
+    All data pre-calculated and formatted for direct consumption by frontend
+    chart components (Chart.js, Recharts, D3, etc.).
+    """
+
+    simulation_id: UUID = Field(
+        description="Simulation being visualized"
+    )
+    domain: str = Field(
+        description="Simulation domain (growth, retention, finance, etc.)"
+    )
+    time_series: dict[str, list[TimeSeriesDataPoint]] = Field(
+        description=(
+            "Time-series data per metric. "
+            "Keys are metric names, values are arrays of time points."
+        )
+    )
+    waterfall: dict[str, list[WaterfallSegment]] = Field(
+        description=(
+            "Waterfall data per metric. "
+            "Keys are metric names, values are arrays of segments."
+        )
+    )
+    metric_deltas: list[MetricDeltaBar] = Field(
+        description="Side-by-side metric comparison across all scenarios"
+    )
+    confidence_level: str = Field(
+        description="Overall simulation confidence: 'high', 'medium', 'low'"
+    )
+    data_freshness_signal: str = Field(
+        description="Data freshness indicator: 'high', 'medium', 'low'"
     )
 
     model_config = ConfigDict(from_attributes=True)

@@ -320,6 +320,8 @@ class SimulationService:
     ) -> tuple[list[Simulation], int]:
         """List simulations for a tenant with pagination.
 
+        E2: Excludes soft-deleted simulations by default.
+
         Args:
             tenant_id: Tenant identifier
             skip: Number of records to skip
@@ -330,18 +332,24 @@ class SimulationService:
         """
         limit = min(limit, 500)
 
-        # Get total count
+        # Get total count (excluding deleted)
         total_count_int = self.db_session.scalar(
             select(func.count())
             .select_from(Simulation)
-            .where(Simulation.tenant_id == tenant_id)
+            .where(
+                Simulation.tenant_id == tenant_id,
+                Simulation.is_deleted.is_(False),
+            )
         ) or 0
 
-        # Get paginated results
+        # Get paginated results (excluding deleted)
         simulations = list(
             self.db_session.scalars(
                 select(Simulation)
-                .where(Simulation.tenant_id == tenant_id)
+                .where(
+                    Simulation.tenant_id == tenant_id,
+                    Simulation.is_deleted.is_(False),
+                )
                 .order_by(Simulation.created_at.desc())
                 .offset(skip)
                 .limit(limit)
@@ -706,6 +714,203 @@ class SimulationService:
                 )
             ),
             "comparison_created_at": datetime.now(),
+        }
+
+    def get_simulation_chart_data(
+        self,
+        tenant_id: uuid.UUID,
+        simulation_id: uuid.UUID,
+    ) -> dict:
+        """Generate chart-ready data for frontend visualization.
+
+        E7: Returns structured data optimized for chart libraries:
+        - Time-series: projected metric values over time periods
+        - Waterfall: baseline → changes → final outcome breakdown
+        - Metric deltas: side-by-side scenario comparisons
+
+        Args:
+            tenant_id: Tenant identifier
+            simulation_id: Simulation identifier
+
+        Returns:
+            Dictionary with time_series, waterfall, and metric_deltas arrays
+
+        Raises:
+            ValueError: If simulation not found
+        """
+        # Fetch simulation with scenarios
+        simulation, scenarios = self.get_simulation_with_scenarios(
+            tenant_id=tenant_id,
+            simulation_id=simulation_id,
+        )
+
+        if simulation is None:
+            msg = f"Simulation {simulation_id} not found for tenant {tenant_id}"
+            raise ValueError(msg)
+
+        # Group scenarios by type
+        scenarios_by_type = {
+            s.scenario_type: s for s in scenarios
+        }
+        baseline = scenarios_by_type.get("baseline")
+        upside = scenarios_by_type.get("upside")
+        downside = scenarios_by_type.get("downside")
+
+        # Extract all unique metrics from output_metrics across scenarios
+        all_metrics: set[str] = set()
+        if baseline:
+            all_metrics.update(baseline.output_metrics.keys())
+        if upside:
+            all_metrics.update(upside.output_metrics.keys())
+        if downside:
+            all_metrics.update(downside.output_metrics.keys())
+
+        # Build time-series data (projected values over time periods)
+        # For simplicity, generate 4 periods showing trend from current to projected
+        time_series_data: dict[str, list[dict]] = {}
+        for metric_name in all_metrics:
+            baseline_val = (
+                baseline.output_metrics.get(metric_name) if baseline else None
+            )
+            upside_val = (
+                upside.output_metrics.get(metric_name) if upside else None
+            )
+            downside_val = (
+                downside.output_metrics.get(metric_name) if downside else None
+            )
+
+            # Generate 4-period projection (current + 3 future periods)
+            # Period 0: current state (baseline), periods 1-3: gradual transition
+            periods = []
+            for i in range(4):
+                if i == 0:
+                    # Period 0: current baseline
+                    periods.append({
+                        "period_index": i,
+                        "period_label": "Current",
+                        "baseline_value": baseline_val,
+                        "upside_value": baseline_val,
+                        "downside_value": baseline_val,
+                    })
+                else:
+                    # Periods 1-3: interpolate toward target values
+                    progress = i / 3.0  # 33%, 67%, 100%
+                    periods.append({
+                        "period_index": i,
+                        "period_label": f"Period {i}",
+                        "baseline_value": baseline_val,
+                        "upside_value": (
+                            baseline_val + (upside_val - baseline_val) * progress
+                            if baseline_val is not None and upside_val is not None
+                            else upside_val
+                        ),
+                        "downside_value": (
+                            baseline_val + (downside_val - baseline_val) * progress
+                            if baseline_val is not None and downside_val is not None
+                            else downside_val
+                        ),
+                    })
+            time_series_data[metric_name] = periods
+
+        # Build waterfall data (baseline → changes → final)
+        waterfall_data: dict[str, list[dict]] = {}
+        for metric_name in all_metrics:
+            baseline_val = (
+                baseline.output_metrics.get(metric_name, 0.0)
+                if baseline
+                else 0.0
+            )
+            upside_val = (
+                upside.output_metrics.get(metric_name, 0.0) if upside else 0.0
+            )
+            downside_val = (
+                downside.output_metrics.get(metric_name, 0.0)
+                if downside
+                else 0.0
+            )
+
+            # Waterfall shows: Start (baseline) → Upside change → Downside
+            upside_delta = (
+                upside_val - baseline_val
+                if upside_val and baseline_val
+                else 0.0
+            )
+            downside_delta = (
+                downside_val - baseline_val
+                if downside_val and baseline_val
+                else 0.0
+            )
+
+            segments = [
+                {
+                    "segment_label": "Baseline",
+                    "segment_type": "start",
+                    "value": baseline_val,
+                    "cumulative_value": baseline_val,
+                },
+                {
+                    "segment_label": "Upside Change",
+                    "segment_type": "increase" if upside_delta >= 0 else "decrease",
+                    "value": upside_delta,
+                    "cumulative_value": upside_val,
+                },
+                {
+                    "segment_label": "Downside Change",
+                    "segment_type": "increase" if downside_delta >= 0 else "decrease",
+                    "value": downside_delta,
+                    "cumulative_value": downside_val,
+                },
+            ]
+            waterfall_data[metric_name] = segments
+
+        # Build metric deltas (side-by-side comparison)
+        metric_deltas = []
+        for metric_name in sorted(all_metrics):
+            baseline_val = (
+                baseline.output_metrics.get(metric_name) if baseline else None
+            )
+            upside_val = (
+                upside.output_metrics.get(metric_name) if upside else None
+            )
+            downside_val = (
+                downside.output_metrics.get(metric_name) if downside else None
+            )
+
+            # Calculate deltas
+            upside_delta = None
+            upside_delta_pct = None
+            if baseline_val is not None and upside_val is not None:
+                upside_delta = upside_val - baseline_val
+                if baseline_val != 0:
+                    upside_delta_pct = (upside_delta / baseline_val) * 100.0
+
+            downside_delta = None
+            downside_delta_pct = None
+            if baseline_val is not None and downside_val is not None:
+                downside_delta = downside_val - baseline_val
+                if baseline_val != 0:
+                    downside_delta_pct = (downside_delta / baseline_val) * 100.0
+
+            metric_deltas.append({
+                "metric_name": metric_name,
+                "metric_unit": "value",  # Could be enhanced with unit inference
+                "baseline_value": baseline_val,
+                "upside_value": upside_val,
+                "upside_delta": upside_delta,
+                "upside_delta_pct": upside_delta_pct,
+                "downside_value": downside_val,
+                "downside_delta": downside_delta,
+                "downside_delta_pct": downside_delta_pct,
+            })
+
+        return {
+            "simulation_id": str(simulation_id),
+            "domain": simulation.domain,
+            "time_series": time_series_data,
+            "waterfall": waterfall_data,
+            "metric_deltas": metric_deltas,
+            "confidence_level": simulation.confidence_level,
+            "data_freshness_signal": simulation.data_freshness_signal,
         }
 
     def generate_simulation_export(

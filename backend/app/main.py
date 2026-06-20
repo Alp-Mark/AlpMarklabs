@@ -8,15 +8,25 @@ from urllib.parse import urlencode
 from uuid import UUID
 
 import jwt
-from fastapi import Body, Depends, FastAPI, HTTPException, Query, status
+import sqlalchemy as sa
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend.app import (
+    date_utils,
+    executive_service,
+    growth_service,
+    kpis,
+    retention_service,
+)
+from backend.app import permissions as perm
 from backend.app.audit import write_alert_event, write_audit_event
 from backend.app.db.models import (
     AcquisitionCohort,
+    AcquisitionMetricsSnapshot,
     AlertAcknowledgement,
     AlertDismissal,
     AlertEventLog,
@@ -35,25 +45,43 @@ from backend.app.db.models import (
     DelegationRule,
     EmailDeliveryLog,
     EscalationRule,
+    ExecutiveKpiSnapshot,
     ExportShare,
+    FeatureFlag,
     InventoryRiskSnapshot,
     InventoryRiskThreshold,
     MarginDriftSnapshot,
     MarginDriftThreshold,
+    Notification,
     NotificationRoutingSetting,
     OperationalImpactSnapshot,
+    PasswordResetToken,
     PrivacyRequest,
     Recommendation,
     RecommendationSuppressionState,
+    RetentionDailySnapshot,
+    Role,
     SavedAnalysisView,
+    Scenario,
     Simulation,
+    SubscriptionPlan,
+    SupportTicket,
     Tenant,
+    TenantFeatureFlag,
     TenantMembership,
     TenantRuleThreshold,
     User,
     UserInvitation,
+    UserNotificationPreference,
+    UserSession,
 )
 from backend.app.db.session import get_db
+from backend.app.feature_enforcement import (
+    RequireCustomSegments,
+    RequireSimulations,
+)
+from backend.app.password import hash_password, verify_password
+from backend.app.permissions import get_system_role_permissions
 from backend.app.recommendations.export import export_analysis_view
 from backend.app.recommendations.lifecycle import (
     InvalidTransitionError,
@@ -67,9 +95,22 @@ from backend.app.recommendations.suppression import (
 from backend.app.schemas.account import (
     AccountActivationRequest,
     AccountActivationResponse,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LoginRequest,
     LoginResponse,
+    LogoutResponse,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
+    SessionListResponse,
     UserResponse,
+    UserSessionResponse,
+)
+from backend.app.schemas.admin_tenant import (
+    AdminTenantListResponse,
+    AdminTenantResponse,
+    AdminTenantStatusUpdateRequest,
+    AdminTenantUpdateRequest,
 )
 from backend.app.schemas.alert_config import (
     AlertRecipientCreate,
@@ -120,6 +161,7 @@ from backend.app.schemas.cohort import (
 )
 from backend.app.schemas.connector import (
     ConnectorApiKeyConnectRequest,
+    ConnectorHealthSummary,
     ConnectorIntegrationStatusResponse,
     ConnectorManualResyncResponse,
     ConnectorOAuthReauthorizeRequest,
@@ -131,6 +173,11 @@ from backend.app.schemas.connector import (
     ShopifyOAuthCallbackRequest,
     ShopifyOAuthStartRequest,
     ShopifyOAuthStartResponse,
+    WorkspaceHealthResponse,
+)
+from backend.app.schemas.connector_availability import (
+    ConnectorAvailabilityResponse,
+    ConnectorSourceBreakdown,
 )
 from backend.app.schemas.custom_segment import (
     CustomSegmentCreate,
@@ -147,6 +194,14 @@ from backend.app.schemas.email_delivery import (
     EmailDeliveryHistoryResponse,
     EmailDeliveryListResponse,
     EmailDeliveryResponse,
+)
+from backend.app.schemas.executive import ExecutiveOverviewResponse
+from backend.app.schemas.feature_flags import (
+    FeatureFlagCreateRequest,
+    FeatureFlagResponse,
+    FeatureFlagUpdateRequest,
+    TenantFeatureResponse,
+    TenantFeatureToggleRequest,
 )
 from backend.app.schemas.finance import (
     CostDriverListResponse,
@@ -167,6 +222,7 @@ from backend.app.schemas.finance import (
     MarginDriftThresholdResponse,
     MarginDriftThresholdUpdateRequest,
 )
+from backend.app.schemas.growth import GrowthDashboardResponse
 from backend.app.schemas.inventory import (
     InventoryRiskListResponse,
     InventoryRiskThresholdCreateRequest,
@@ -180,6 +236,7 @@ from backend.app.schemas.inventory import (
     WarehouseInventoryHealthResponse,
 )
 from backend.app.schemas.invitation import UserInviteRequest, UserInviteResponse
+from backend.app.schemas.kpis import KPICatalogResponse, KPIMetadataResponse
 from backend.app.schemas.locale import (
     OPS_CURRENCY_SCALE_VS_USD,
     OPS_USD_DEFAULT,
@@ -190,10 +247,21 @@ from backend.app.schemas.membership import (
     MembershipResponse,
     MembershipRoleUpdateRequest,
 )
+from backend.app.schemas.navigation import (
+    NavigationMenuItem,
+    NavigationMenuResponse,
+)
 from backend.app.schemas.notification import (
+    NotificationCreate,
+    NotificationListResponse,
+    NotificationResponse,
     NotificationRouteItem,
     NotificationRoutingResponse,
     NotificationRoutingUpdateRequest,
+    UserNotificationPreferenceCreate,
+    UserNotificationPreferenceListResponse,
+    UserNotificationPreferenceResponse,
+    UserNotificationPreferenceUpdate,
 )
 from backend.app.schemas.onboarding import (
     OnboardingChecklistItem,
@@ -203,15 +271,33 @@ from backend.app.schemas.operations import (
     OperationalImpactListResponse,
     OperationalImpactSnapshotResponse,
 )
+from backend.app.schemas.platform_metrics import (
+    FeatureFlagMetrics,
+    IntegrationMetrics,
+    PlatformMetricsResponse,
+    SubscriptionMetrics,
+    TenantMetrics,
+    UserMetrics,
+)
 from backend.app.schemas.privacy import (
     PrivacyRequestCreateRequest,
     PrivacyRequestResponse,
     PrivacyRequestStatusUpdateRequest,
 )
 from backend.app.schemas.recommendation import (
+    RecommendationDetailResponse,
     RecommendationListResponse,
     RecommendationResponse,
     RecommendationStatusUpdateRequest,
+)
+from backend.app.schemas.retention import RetentionDashboardResponse
+from backend.app.schemas.roles import (
+    PermissionCatalogResponse,
+    PermissionInfo,
+    RoleCreateRequest,
+    RoleListResponse,
+    RoleResponse,
+    RoleUpdateRequest,
 )
 from backend.app.schemas.rule_threshold import (
     RuleThresholdListResponse,
@@ -229,11 +315,15 @@ from backend.app.schemas.simulation import (
     RecommendationSimulationLaunchRequest,
     RecommendationSimulationLaunchResponse,
     ScenarioResponse,
+    SimulationChartDataResponse,
     SimulationComparisonRequest,
     SimulationDetailResponse,
+    SimulationDuplicateRequest,
+    SimulationDuplicateResponse,
     SimulationExportRequest,
     SimulationListResponse,
     SimulationResponse,
+    SimulationUpdateRequest,
 )
 from backend.app.schemas.simulation_inputs import (
     ExecutiveSimulationInput,
@@ -242,18 +332,40 @@ from backend.app.schemas.simulation_inputs import (
     OperationsSimulationInput,
     RetentionSimulationInput,
 )
+from backend.app.schemas.subscription_plans import (
+    SubscriptionPlanCreateRequest,
+    SubscriptionPlanLimits,
+    SubscriptionPlanResponse,
+    SubscriptionPlanUpdateRequest,
+)
+from backend.app.schemas.support_ticket import (
+    SupportTicketClose,
+    SupportTicketCreate,
+    SupportTicketListResponse,
+    SupportTicketResponse,
+    SupportTicketUpdate,
+)
 from backend.app.schemas.suppression import (
     SuppressionStateListResponse,
     SuppressionStateResponse,
 )
 from backend.app.schemas.tenant import TenantCreateRequest, TenantCreateResponse
+from backend.app.schemas.trends import (
+    CostDriverTrendResponse,
+    ExecutiveTrendResponse,
+    GrowthTrendResponse,
+    InventoryRiskTrendResponse,
+    MarginDriftTrendResponse,
+    OperationalImpactTrendResponse,
+    RetentionTrendResponse,
+)
 from backend.app.security import (
     AUTH_JWT_ALGORITHM,
     AUTH_JWT_SECRET,
     AuthContext,
     get_current_auth,
+    require_permissions,
     require_platform_roles,
-    require_tenant_roles,
 )
 from backend.app.vault import (
     VAULT_KEY_VERSION,
@@ -337,18 +449,100 @@ SYNC_SUCCESS_ACTIONS_BY_SOURCE = {
 }
 AuthDep = Annotated[AuthContext, Depends(get_current_auth)]
 SuperAdminDep = Annotated[AuthContext, Depends(require_platform_roles("super_admin"))]
-AdminTenantDep = Annotated[
-    AuthContext,
-    Depends(require_tenant_roles("brand_admin")),
+
+# Permission-based dependencies for tenant access
+AdminMembersDep = Annotated[
+    AuthContext, Depends(require_permissions("admin.members"))
 ]
-FinanceControllerDep = Annotated[
-    AuthContext,
-    Depends(require_tenant_roles("finance_controller", "brand_admin")),
+AdminRolesDep = Annotated[
+    AuthContext, Depends(require_permissions("admin.roles"))
 ]
-OperationsManagerDep = Annotated[
-    AuthContext,
-    Depends(require_tenant_roles("operations_manager", "brand_admin")),
+AdminBillingDep = Annotated[
+    AuthContext, Depends(require_permissions("admin.billing"))
 ]
+AdminIntegrationsDep = Annotated[
+    AuthContext, Depends(require_permissions("admin.integrations"))
+]
+AdminSettingsDep = Annotated[
+    AuthContext, Depends(require_permissions("admin.settings"))
+]
+AdminAuditDep = Annotated[
+    AuthContext, Depends(require_permissions("admin.audit"))
+]
+
+ExecutiveViewDep = Annotated[
+    AuthContext, Depends(require_permissions("executive.view"))
+]
+ExecutiveTargetsDep = Annotated[
+    AuthContext, Depends(require_permissions("executive.targets"))
+]
+ExecutiveApproveDep = Annotated[
+    AuthContext, Depends(require_permissions("executive.approve"))
+]
+ExecutiveSimulateDep = Annotated[
+    AuthContext, Depends(require_permissions("executive.simulate"))
+]
+
+FinanceViewDep = Annotated[
+    AuthContext, Depends(require_permissions("finance.view"))
+]
+FinanceEditCostsDep = Annotated[
+    AuthContext, Depends(require_permissions("finance.edit_costs"))
+]
+FinanceAnalyzeDep = Annotated[
+    AuthContext, Depends(require_permissions("finance.analyze"))
+]
+
+OperationsViewDep = Annotated[
+    AuthContext, Depends(require_permissions("operations.view"))
+]
+OperationsInventoryDep = Annotated[
+    AuthContext, Depends(require_permissions("operations.inventory"))
+]
+OperationsAnalyzeDep = Annotated[
+    AuthContext, Depends(require_permissions("operations.analyze"))
+]
+
+GrowthViewDep = Annotated[
+    AuthContext, Depends(require_permissions("growth.view"))
+]
+GrowthAnalyzeDep = Annotated[
+    AuthContext, Depends(require_permissions("growth.analyze"))
+]
+GrowthSimulateDep = Annotated[
+    AuthContext, Depends(require_permissions("growth.simulate"))
+]
+
+RetentionViewDep = Annotated[
+    AuthContext, Depends(require_permissions("retention.view"))
+]
+RetentionAnalyzeDep = Annotated[
+    AuthContext, Depends(require_permissions("retention.analyze"))
+]
+RetentionSimulateDep = Annotated[
+    AuthContext, Depends(require_permissions("retention.simulate"))
+]
+
+IntelRecommendationsViewDep = Annotated[
+    AuthContext, Depends(require_permissions("intel.recommendations.view"))
+]
+IntelRecommendationsReviewDep = Annotated[
+    AuthContext, Depends(require_permissions("intel.recommendations.review"))
+]
+IntelSimulationsRunDep = Annotated[
+    AuthContext, Depends(require_permissions("intel.simulations.run"))
+]
+IntelSimulationsViewDep = Annotated[
+    AuthContext, Depends(require_permissions("intel.simulations.view"))
+]
+IntelInsightsViewDep = Annotated[
+    AuthContext, Depends(require_permissions("intel.insights.view"))
+]
+IntelAlertsManageDep = Annotated[
+    AuthContext, Depends(require_permissions("intel.alerts.manage"))
+]
+
+# Legacy aliases removed - all endpoints now use granular permission-based deps
 
 
 def _generate_unique_invitation_token(db: Session) -> str:
@@ -602,6 +796,45 @@ def _derive_stale_data_gate(
     return "warning", "Data is stale and should be reviewed before decisions."
 
 
+def _compute_connector_health_status(
+    connector: ConnectorIntegration,
+    *,
+    now: datetime | None = None,
+) -> str:
+    """Compute overall connector health status (E3).
+
+    Returns:
+        "healthy": Connected, syncing well, data fresh, no errors
+        "degraded": Connected but queued/stale data/minor issues
+        "critical": Disconnected, errors, or very stale data
+        "unknown": Cannot determine status
+    """
+    sync_progress = _derive_sync_progress(connector)
+    freshness_label = _derive_freshness_label(connector, now=now)
+
+    # Critical: disconnected, errors, or very stale data
+    if connector.status != "connected":
+        return "critical"
+    if sync_progress == "error":
+        return "critical"
+    if connector.error_message is not None:
+        return "critical"
+    if freshness_label == "low":
+        return "critical"
+
+    # Degraded: sync queued or medium freshness
+    if sync_progress == "sync_queued":
+        return "degraded"
+    if freshness_label == "medium":
+        return "degraded"
+
+    # Healthy: connected, healthy sync, high freshness
+    if sync_progress in ("healthy", "idle") and freshness_label == "high":
+        return "healthy"
+
+    return "unknown"
+
+
 def _derive_sync_metrics(
     db: Session,
     *,
@@ -672,20 +905,342 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/subscription-plans", response_model=list[SubscriptionPlanResponse])
+def list_subscription_plans(
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[SubscriptionPlanResponse]:
+    """List all active subscription plans (public endpoint)."""
+    plans = db.scalars(
+        select(SubscriptionPlan)
+        .where(SubscriptionPlan.is_active.is_(True))
+        .order_by(SubscriptionPlan.sort_order)
+    ).all()
+
+    return [
+        SubscriptionPlanResponse(
+            id=plan.id,
+            slug=plan.slug,
+            name=plan.name,
+            description=plan.description,
+            price_monthly=plan.price_monthly,
+            price_annual=plan.price_annual,
+            features=plan.features if isinstance(plan.features, list) else [],
+            limits=SubscriptionPlanLimits(**plan.limits),
+            is_active=plan.is_active,
+            sort_order=plan.sort_order,
+        )
+        for plan in plans
+    ]
+
+
+@app.get("/subscription-plans/{slug}", response_model=SubscriptionPlanResponse)
+def get_subscription_plan(
+    slug: str,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> SubscriptionPlanResponse:
+    """Get subscription plan by slug (public endpoint)."""
+    plan = db.scalar(
+        select(SubscriptionPlan)
+        .where(
+            SubscriptionPlan.slug == slug,
+            SubscriptionPlan.is_active.is_(True),
+        )
+    )
+
+    if not plan:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subscription plan not found",
+        )
+
+    return SubscriptionPlanResponse(
+        id=plan.id,
+        slug=plan.slug,
+        name=plan.name,
+        description=plan.description,
+        price_monthly=plan.price_monthly,
+        price_annual=plan.price_annual,
+        features=plan.features if isinstance(plan.features, list) else [],
+        limits=SubscriptionPlanLimits(**plan.limits),
+        is_active=plan.is_active,
+        sort_order=plan.sort_order,
+    )
+
+
 @app.post("/auth/login", response_model=LoginResponse)
-def login(request: LoginRequest) -> LoginResponse:
-    """Generate a JWT token for development/demo purposes."""
-    # For demo: accept any email with any password
-    # In production, verify credentials against database
+def login(
+    request_body: LoginRequest,
+    request: Request,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> LoginResponse:
+    """Authenticate user and return JWT token."""
+    # Look up user by email
+    user = db.scalar(select(User).where(User.email == request_body.email))
+    
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+        )
+    
+    # Verify password
+    if user.password_hash is None or not verify_password(
+        request_body.password, user.password_hash
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+        )
+    
+    # Check if account is active
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account is not active. Please contact support.",
+        )
+    
+    # Generate unique session identifier (jti)
+    jti = str(uuid.uuid4())
+    
+    # Set platform_role based on is_platform_admin
+    platform_role = "super_admin" if user.is_platform_admin else None
+    
+    # Create JWT payload
+    jwt_expiry = datetime.now(UTC) + timedelta(hours=24)
     payload = {
-        "sub": request.email,
-        "email": request.email,
-        "platform_role": "super_admin",
+        "sub": request_body.email,
+        "email": request_body.email,
+        "platform_role": platform_role,
+        "jti": jti,
         "iat": datetime.now(UTC),
-        "exp": datetime.now(UTC) + timedelta(hours=24),
+        "exp": jwt_expiry,
     }
+    
+    # Create session record
+    user_session = UserSession(
+        user_id=user.id,
+        jti=jti,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        expires_at=jwt_expiry,
+    )
+    db.add(user_session)
+    db.commit()
+    
     token = jwt.encode(payload, AUTH_JWT_SECRET, algorithm=AUTH_JWT_ALGORITHM)
     return LoginResponse(access_token=token, token_type="bearer")
+
+
+@app.post("/auth/forgot-password", response_model=ForgotPasswordResponse)
+def forgot_password(
+    request: ForgotPasswordRequest,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> ForgotPasswordResponse:
+    """Initiate password reset flow by generating reset token and sending email."""
+    # Look up user by email
+    user = db.scalar(select(User).where(User.email == request.email))
+    
+    # Always return success to prevent email enumeration attacks
+    if user is None:
+        return ForgotPasswordResponse(
+            message=(
+                "If the email exists in our system, "
+                "a password reset link has been sent."
+            )
+        )
+    
+    # Generate secure random token
+    reset_token = secrets.token_urlsafe(32)
+    
+    # Create password reset token record
+    password_reset = PasswordResetToken(
+        email=user.email,
+        token=reset_token,
+    )
+    db.add(password_reset)
+    db.commit()
+    
+    # TODO: Send email with reset link containing token
+    # In production: email_service.send_password_reset_email(user.email, reset_token)
+    # For now, we just create the token record
+    
+    return ForgotPasswordResponse(
+        message=(
+            "If the email exists in our system, "
+            "a password reset link has been sent."
+        )
+    )
+
+
+@app.post("/auth/reset-password", response_model=ResetPasswordResponse)
+def reset_password(
+    request: ResetPasswordRequest,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> ResetPasswordResponse:
+    """Reset password using valid reset token."""
+    # Look up reset token
+    reset_token = db.scalar(
+        select(PasswordResetToken).where(PasswordResetToken.token == request.token)
+    )
+    
+    if reset_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid or expired reset token.",
+        )
+    
+    # Check if token has already been used
+    if reset_token.used_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This reset token has already been used.",
+        )
+    
+    # Check if token has expired
+    now = datetime.now(UTC)
+    token_expiry = reset_token.expires_at
+    if token_expiry.tzinfo is None:
+        token_expiry = token_expiry.replace(tzinfo=UTC)
+    
+    if token_expiry < now:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="This reset token has expired.",
+        )
+    
+    # Look up user by email from token
+    user = db.scalar(select(User).where(User.email == reset_token.email))
+    
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+    
+    # Update user password
+    user.password_hash = hash_password(request.new_password)
+    
+    # Mark token as used
+    reset_token.used_at = now
+    
+    db.commit()
+    
+    return ResetPasswordResponse(
+        message=(
+            "Password has been successfully reset. "
+            "You can now log in with your new password."
+        )
+    )
+
+
+@app.get("/me/sessions", response_model=SessionListResponse)
+def get_user_sessions(
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> SessionListResponse:
+    """Get all active sessions for the current user."""
+    # Look up user by email
+    user = db.scalar(select(User).where(User.email == auth.email))
+    
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+    
+    # Get all non-revoked sessions for the user
+    sessions = db.scalars(
+        select(UserSession)
+        .where(UserSession.user_id == user.id)
+        .where(UserSession.revoked_at.is_(None))
+        .order_by(UserSession.created_at.desc())
+    ).all()
+    
+    # Get current jti from auth context
+    current_jti = auth.jti
+    
+    session_responses = [
+        UserSessionResponse(
+            id=session.id,
+            jti=session.jti,
+            ip_address=session.ip_address,
+            user_agent=session.user_agent,
+            created_at=session.created_at,
+            last_seen_at=session.last_seen_at,
+            expires_at=session.expires_at,
+            is_current=(session.jti == current_jti),
+        )
+        for session in sessions
+    ]
+    
+    return SessionListResponse(sessions=session_responses)
+
+
+@app.post("/auth/logout", response_model=LogoutResponse)
+def logout(
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> LogoutResponse:
+    """Logout current session by revoking the JWT token."""
+    if auth.jti is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active session found.",
+        )
+    
+    # Revoke the session with matching jti
+    session = db.scalar(
+        select(UserSession).where(UserSession.jti == auth.jti)
+    )
+    
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found.",
+        )
+    
+    if session.revoked_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Session already revoked.",
+        )
+    
+    session.revoked_at = datetime.now(UTC)
+    db.commit()
+    
+    return LogoutResponse(message="Successfully logged out.")
+
+
+@app.post("/auth/logout-all", response_model=LogoutResponse)
+def logout_all(
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> LogoutResponse:
+    """Logout all sessions by revoking all active JWT tokens for the user."""
+    user = db.scalar(select(User).where(User.email == auth.email))
+    
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+    
+    # Revoke all active sessions for this user
+    now = datetime.now(UTC)
+    sessions = db.scalars(
+        select(UserSession)
+        .where(UserSession.user_id == user.id)
+        .where(UserSession.revoked_at.is_(None))
+    ).all()
+    
+    for session in sessions:
+        session.revoked_at = now
+    
+    db.commit()
+    
+    return LogoutResponse(
+        message=f"Successfully logged out from {len(sessions)} session(s)."
+    )
 
 
 @app.get("/users/me", response_model=UserResponse)
@@ -715,6 +1270,237 @@ def get_current_user(
         email=auth.email,
         platform_role=auth.platform_role or "member",
         tenant_id=tenant_id,
+    )
+
+
+@app.get("/me/navigation", response_model=NavigationMenuResponse)
+def get_navigation_menu(
+    tenant_id: uuid.UUID,
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> NavigationMenuResponse:
+    """Get persona-specific navigation menu structure.
+
+    E8: Returns menu items based on user's role, permissions, and tenant
+    feature flags. Frontend can render the navigation directly without
+    additional permission checks.
+
+    Args:
+        tenant_id: Tenant identifier (query parameter)
+        auth: Authenticated user context
+        db: Database session
+
+    Returns:
+        NavigationMenuResponse with filtered menu items and badge counts
+
+    Raises:
+        403: If user does not have access to this tenant
+        404: If tenant not found
+    """
+    from backend.app.feature_enforcement import check_tenant_feature_access
+
+    # Validate tenant exists
+    tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    if tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found.",
+        )
+
+    # Get user and membership
+    user = db.scalar(select(User).where(User.email == auth.email.strip().lower()))
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to perform this action.",
+        )
+
+    membership = db.scalar(
+        select(TenantMembership).where(
+            TenantMembership.tenant_id == tenant_id,
+            TenantMembership.user_id == user.id,
+        )
+    )
+    if membership is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to perform this action.",
+        )
+
+    role = membership.role.strip().lower()
+
+    # Check feature flags
+    has_simulations = check_tenant_feature_access(tenant_id, "simulations", db)
+    has_custom_segments = check_tenant_feature_access(
+        tenant_id, "custom_segments", db
+    )
+
+    # Count unread alerts for badge
+    # For now, count recent AlertEventLog "created" events without acknowledgements
+    from backend.app.db.models import AlertEventLog
+
+    unread_alerts = db.scalar(
+        select(func.count(AlertEventLog.id)).where(
+            AlertEventLog.tenant_id == tenant_id,
+            AlertEventLog.event_type == "created",
+        )
+    ) or 0
+
+    # Count pending recommendations for badge
+    from backend.app.recommendations.lifecycle import RecommendationStatus
+
+    pending_recommendations = db.scalar(
+        select(func.count(Recommendation.id)).where(
+            Recommendation.tenant_id == tenant_id,
+            Recommendation.status == RecommendationStatus.NEW.value,
+        )
+    ) or 0
+
+    # Build menu based on role
+    menu_items: list[NavigationMenuItem] = []
+
+    # Intelligence personas (non-admin roles)
+    if role != "brand_admin":
+        # Dashboard (all intelligence personas)
+        menu_items.append(
+            NavigationMenuItem(
+                section="intelligence",
+                label="Dashboard",
+                path="/dashboard",
+                icon="home",
+                enabled=True,
+                badge_count=None,
+                order=1,
+            )
+        )
+
+        # Recommendations (all intelligence personas)
+        menu_items.append(
+            NavigationMenuItem(
+                section="intelligence",
+                label="Recommendations",
+                path="/recommendations",
+                icon="lightbulb",
+                enabled=True,
+                badge_count=(
+                    pending_recommendations if pending_recommendations > 0 else None
+                ),
+                order=2,
+            )
+        )
+
+        # Simulations (if feature enabled)
+        if has_simulations:
+            menu_items.append(
+                NavigationMenuItem(
+                    section="intelligence",
+                    label="Simulations",
+                    path="/simulations",
+                    icon="chart",
+                    enabled=True,
+                    badge_count=None,
+                    order=3,
+                )
+            )
+
+        # Alerts (all intelligence personas)
+        menu_items.append(
+            NavigationMenuItem(
+                section="intelligence",
+                label="Alerts",
+                path="/alerts",
+                icon="bell",
+                enabled=True,
+                badge_count=unread_alerts if unread_alerts > 0 else None,
+                order=4,
+            )
+        )
+
+        # Analysis (saved views, annotations)
+        menu_items.append(
+            NavigationMenuItem(
+                section="intelligence",
+                label="Analysis",
+                path="/analysis",
+                icon="analytics",
+                enabled=True,
+                badge_count=None,
+                order=5,
+            )
+        )
+
+        # Segments (if custom segments feature enabled)
+        if has_custom_segments and role in [
+            "retention_crm_manager",
+            "growth_performance_manager",
+            "executive_owner",
+        ]:
+            menu_items.append(
+                NavigationMenuItem(
+                    section="intelligence",
+                    label="Segments",
+                    path="/segments",
+                    icon="users",
+                    enabled=True,
+                    badge_count=None,
+                    order=6,
+                )
+            )
+
+    # Brand Admin section
+    if role == "brand_admin" or role == "executive_owner":
+        menu_items.append(
+            NavigationMenuItem(
+                section="admin",
+                label="Integrations",
+                path="/integrations",
+                icon="link",
+                enabled=True,
+                badge_count=None,
+                order=10,
+            )
+        )
+
+        menu_items.append(
+            NavigationMenuItem(
+                section="admin",
+                label="Team",
+                path="/team",
+                icon="people",
+                enabled=True,
+                badge_count=None,
+                order=11,
+            )
+        )
+
+        menu_items.append(
+            NavigationMenuItem(
+                section="admin",
+                label="Billing",
+                path="/billing",
+                icon="payment",
+                enabled=True,
+                badge_count=None,
+                order=12,
+            )
+        )
+
+        menu_items.append(
+            NavigationMenuItem(
+                section="admin",
+                label="Settings",
+                path="/settings",
+                icon="settings",
+                enabled=True,
+                badge_count=None,
+                order=13,
+            )
+        )
+
+    return NavigationMenuResponse(
+        user_role=role,
+        tenant_id=str(tenant_id),
+        menu_items=menu_items,
     )
 
 
@@ -843,6 +1629,29 @@ def create_tenant(
     db.add(tenant)
     db.flush()
 
+    # Seed system roles for the new tenant (mimics migration 0058)
+    system_role_names = [
+        "brand_admin",
+        "executive_owner",
+        "growth_performance_manager",
+        "retention_crm_manager",
+        "finance_controller",
+        "operations_inventory_manager",
+    ]
+    roles_map = {}
+    for role_name in system_role_names:
+        permissions = get_system_role_permissions(role_name)
+        role = Role(
+            id=uuid.uuid4(),
+            tenant_id=tenant.id,
+            name=role_name,
+            permissions=permissions,
+            is_system=True,
+        )
+        db.add(role)
+        roles_map[role_name] = role
+    db.flush()
+
     creator_email = auth.email.strip().lower()
     creator = db.scalar(select(User).where(User.email == creator_email))
     if creator is None:
@@ -856,11 +1665,14 @@ def create_tenant(
     else:
         creator.is_active = True
 
+    # Create membership with role_id FK to brand_admin role
+    brand_admin_role = roles_map["brand_admin"]
     db.add(
         TenantMembership(
             tenant_id=tenant.id,
             user_id=creator.id,
             role="brand_admin",
+            role_id=brand_admin_role.id,
         )
     )
     write_audit_event(
@@ -886,7 +1698,7 @@ def create_tenant(
 def invite_user(
     tenant_id: uuid.UUID,
     payload: UserInviteRequest,
-    _auth: AdminTenantDep,
+    _auth: AdminMembersDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> UserInviteResponse:
     tenant = _get_tenant_or_404(db, tenant_id)
@@ -986,11 +1798,17 @@ def activate_account(
 
     user = db.scalar(select(User).where(User.email == invitation.email))
     if user is None:
-        user = User(email=invitation.email, full_name=payload.full_name, is_active=True)
+        user = User(
+            email=invitation.email,
+            full_name=payload.full_name,
+            password_hash=hash_password(payload.password),
+            is_active=True,
+        )
         db.add(user)
         db.flush()
     else:
         user.full_name = payload.full_name
+        user.password_hash = hash_password(payload.password)
         user.is_active = True
 
     membership = db.scalar(
@@ -1034,7 +1852,7 @@ def activate_account(
 )
 def get_onboarding_checklist(
     tenant_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: AdminSettingsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> OnboardingChecklistResponse:
     tenant = _get_tenant_or_404(db, tenant_id)
@@ -1100,7 +1918,7 @@ def update_member_role(
     tenant_id: uuid.UUID,
     user_id: uuid.UUID,
     payload: MembershipRoleUpdateRequest,
-    _auth: AdminTenantDep,
+    _auth: AdminRolesDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> MembershipResponse:
     normalized_role = payload.role.strip().lower()
@@ -1144,7 +1962,7 @@ def update_member_role(
 def deactivate_member(
     tenant_id: uuid.UUID,
     user_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: AdminMembersDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> MembershipResponse:
     membership, user = _get_tenant_membership_with_user_or_404(
@@ -1177,7 +1995,7 @@ def deactivate_member(
 @app.get("/tenants/{tenant_id}/billing-seats", response_model=BillingSeatResponse)
 def get_billing_and_seats(
     tenant_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: AdminBillingDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> BillingSeatResponse:
     tenant = _get_tenant_or_404(db, tenant_id)
@@ -1189,7 +2007,7 @@ def get_billing_and_seats(
 def update_billing_and_seats(
     tenant_id: uuid.UUID,
     payload: BillingSeatUpdateRequest,
-    _auth: AdminTenantDep,
+    _auth: AdminBillingDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> BillingSeatResponse:
     tenant = _get_tenant_or_404(db, tenant_id)
@@ -1247,13 +2065,902 @@ def update_billing_and_seats(
     return _build_billing_seat_response(db, tenant)
 
 
+# --------------------------------------------------------------------------------
+# Super-Admin: Subscription Plan Management
+# --------------------------------------------------------------------------------
+
+
+@app.post("/admin/subscription-plans", response_model=SubscriptionPlanResponse)
+def create_subscription_plan(
+    payload: SubscriptionPlanCreateRequest,
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> SubscriptionPlanResponse:
+    """Create new subscription plan (super-admin only)."""
+    # Check if slug already exists
+    existing = db.scalar(
+        select(SubscriptionPlan).where(SubscriptionPlan.slug == payload.slug)
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Plan with slug '{payload.slug}' already exists",
+        )
+
+    plan = SubscriptionPlan(
+        slug=payload.slug,
+        name=payload.name,
+        description=payload.description,
+        price_monthly=payload.price_monthly,
+        price_annual=payload.price_annual,
+        features=payload.features,
+        limits=payload.limits.model_dump(),
+        is_active=payload.is_active,
+        sort_order=payload.sort_order,
+    )
+    db.add(plan)
+    db.commit()
+    db.refresh(plan)
+
+    return SubscriptionPlanResponse(
+        id=plan.id,
+        slug=plan.slug,
+        name=plan.name,
+        description=plan.description,
+        price_monthly=plan.price_monthly,
+        price_annual=plan.price_annual,
+        features=plan.features if isinstance(plan.features, list) else [],
+        limits=SubscriptionPlanLimits(**plan.limits),
+        is_active=plan.is_active,
+        sort_order=plan.sort_order,
+    )
+
+
+@app.patch(
+    "/admin/subscription-plans/{plan_id}",
+    response_model=SubscriptionPlanResponse,
+)
+def update_subscription_plan(
+    plan_id: uuid.UUID,
+    payload: SubscriptionPlanUpdateRequest,
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> SubscriptionPlanResponse:
+    """Update subscription plan (super-admin only)."""
+    plan = db.scalar(select(SubscriptionPlan).where(SubscriptionPlan.id == plan_id))
+    if not plan:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subscription plan not found",
+        )
+
+    if payload.name is not None:
+        plan.name = payload.name
+    if payload.description is not None:
+        plan.description = payload.description
+    if payload.price_monthly is not None:
+        plan.price_monthly = payload.price_monthly
+    if payload.price_annual is not None:
+        plan.price_annual = payload.price_annual
+    if payload.features is not None:
+        plan.features = payload.features  # type: ignore[assignment]
+    if payload.limits is not None:
+        plan.limits = payload.limits.model_dump()
+    if payload.is_active is not None:
+        plan.is_active = payload.is_active
+    if payload.sort_order is not None:
+        plan.sort_order = payload.sort_order
+
+    db.commit()
+    db.refresh(plan)
+
+    return SubscriptionPlanResponse(
+        id=plan.id,
+        slug=plan.slug,
+        name=plan.name,
+        description=plan.description,
+        price_monthly=plan.price_monthly,
+        price_annual=plan.price_annual,
+        features=plan.features if isinstance(plan.features, list) else [],
+        limits=SubscriptionPlanLimits(**plan.limits),
+        is_active=plan.is_active,
+        sort_order=plan.sort_order,
+    )
+
+
+@app.delete(
+    "/admin/subscription-plans/{plan_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def deactivate_subscription_plan(
+    plan_id: uuid.UUID,
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> Response:
+    """Deactivate subscription plan (super-admin only)."""
+    plan = db.scalar(select(SubscriptionPlan).where(SubscriptionPlan.id == plan_id))
+    if not plan:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subscription plan not found",
+        )
+
+    plan.is_active = False
+    db.commit()
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------------------------------------
+# Feature Flags
+# --------------------------------------------------------------------------------
+
+
+@app.get("/tenants/{tenant_id}/features", response_model=list[TenantFeatureResponse])
+def get_tenant_features(
+    tenant_id: uuid.UUID,
+    _auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[TenantFeatureResponse]:
+    """Get all feature flags for a tenant with their enabled status."""
+    tenant = _get_tenant_or_404(db, tenant_id)
+
+    # Get tenant's subscription plan
+    plan = db.scalar(
+        select(SubscriptionPlan).where(SubscriptionPlan.slug == tenant.billing_plan)
+    )
+
+    # Get all available feature flags
+    flags = db.scalars(
+        select(FeatureFlag).where(FeatureFlag.is_available.is_(True))
+    ).all()
+
+    # Get tenant's feature flag overrides
+    overrides = {
+        override.feature_flag_slug: override
+        for override in db.scalars(
+            select(TenantFeatureFlag).where(
+                TenantFeatureFlag.tenant_id == tenant_id
+            )
+        ).all()
+    }
+
+    features = []
+    for flag in flags:
+        # Determine if enabled based on: override > plan > default
+        if flag.slug in overrides:
+            is_enabled = overrides[flag.slug].is_enabled
+            source = "override"
+        elif plan and flag.slug in (
+            plan.features if isinstance(plan.features, list) else []
+        ):
+            is_enabled = True
+            source = "plan"
+        else:
+            is_enabled = flag.default_enabled
+            source = "default"
+
+        features.append(
+            TenantFeatureResponse(
+                slug=flag.slug,
+                name=flag.name,
+                description=flag.description,
+                category=flag.category,
+                is_enabled=is_enabled,
+                source=source,
+            )
+        )
+
+    return features
+
+
+@app.get("/admin/feature-flags", response_model=list[FeatureFlagResponse])
+def list_feature_flags(
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[FeatureFlagResponse]:
+    """List all feature flags (super-admin only)."""
+    flags = db.scalars(select(FeatureFlag)).all()
+
+    return [
+        FeatureFlagResponse(
+            id=flag.id,
+            slug=flag.slug,
+            name=flag.name,
+            description=flag.description,
+            category=flag.category,
+            is_available=flag.is_available,
+            default_enabled=flag.default_enabled,
+        )
+        for flag in flags
+    ]
+
+
+@app.post("/admin/feature-flags", response_model=FeatureFlagResponse)
+def create_feature_flag(
+    payload: FeatureFlagCreateRequest,
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> FeatureFlagResponse:
+    """Create new feature flag (super-admin only)."""
+    # Check if slug already exists
+    existing = db.scalar(
+        select(FeatureFlag).where(FeatureFlag.slug == payload.slug)
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Feature flag with slug '{payload.slug}' already exists",
+        )
+
+    flag = FeatureFlag(
+        slug=payload.slug,
+        name=payload.name,
+        description=payload.description,
+        category=payload.category,
+        is_available=payload.is_available,
+        default_enabled=payload.default_enabled,
+    )
+    db.add(flag)
+    db.commit()
+    db.refresh(flag)
+
+    return FeatureFlagResponse(
+        id=flag.id,
+        slug=flag.slug,
+        name=flag.name,
+        description=flag.description,
+        category=flag.category,
+        is_available=flag.is_available,
+        default_enabled=flag.default_enabled,
+    )
+
+
+@app.patch("/admin/feature-flags/{flag_id}", response_model=FeatureFlagResponse)
+def update_feature_flag(
+    flag_id: uuid.UUID,
+    payload: FeatureFlagUpdateRequest,
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> FeatureFlagResponse:
+    """Update feature flag (super-admin only)."""
+    flag = db.scalar(select(FeatureFlag).where(FeatureFlag.id == flag_id))
+    if not flag:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Feature flag not found",
+        )
+
+    if payload.name is not None:
+        flag.name = payload.name
+    if payload.description is not None:
+        flag.description = payload.description
+    if payload.category is not None:
+        flag.category = payload.category
+    if payload.is_available is not None:
+        flag.is_available = payload.is_available
+    if payload.default_enabled is not None:
+        flag.default_enabled = payload.default_enabled
+
+    db.commit()
+    db.refresh(flag)
+
+    return FeatureFlagResponse(
+        id=flag.id,
+        slug=flag.slug,
+        name=flag.name,
+        description=flag.description,
+        category=flag.category,
+        is_available=flag.is_available,
+        default_enabled=flag.default_enabled,
+    )
+
+
+@app.post("/admin/tenants/{tenant_id}/features/toggle")
+def toggle_tenant_feature(
+    tenant_id: uuid.UUID,
+    payload: TenantFeatureToggleRequest,
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> dict[str, str]:
+    """Toggle feature flag for tenant (super-admin only)."""
+    _get_tenant_or_404(db, tenant_id)
+
+    # Verify feature flag exists
+    flag = db.scalar(
+        select(FeatureFlag).where(FeatureFlag.slug == payload.feature_slug)
+    )
+    if not flag:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Feature flag '{payload.feature_slug}' not found",
+        )
+
+    # Check if override already exists
+    override = db.scalar(
+        select(TenantFeatureFlag).where(
+            TenantFeatureFlag.tenant_id == tenant_id,
+            TenantFeatureFlag.feature_flag_slug == payload.feature_slug,
+        )
+    )
+
+    if override:
+        # Update existing override
+        override.is_enabled = payload.is_enabled
+        if payload.is_enabled:
+            override.enabled_at = datetime.now(UTC)
+            override.disabled_at = None
+        else:
+            override.disabled_at = datetime.now(UTC)
+            override.enabled_at = None
+    else:
+        # Create new override
+        override = TenantFeatureFlag(
+            tenant_id=tenant_id,
+            feature_flag_slug=payload.feature_slug,
+            is_enabled=payload.is_enabled,
+            enabled_at=datetime.now(UTC) if payload.is_enabled else None,
+            disabled_at=None if payload.is_enabled else datetime.now(UTC),
+        )
+        db.add(override)
+
+    db.commit()
+
+    status_text = "enabled" if payload.is_enabled else "disabled"
+    return {
+        "message": f"Feature '{payload.feature_slug}' {status_text} for tenant"
+    }
+
+
+# ---------------------------------------------------------------------------
+# D4: Super-admin tenant management
+# ---------------------------------------------------------------------------
+
+
+@app.get("/admin/tenants", response_model=AdminTenantListResponse)
+def list_all_tenants(
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    is_active: bool | None = None,
+    billing_status: str | None = None,
+) -> AdminTenantListResponse:
+    """D4: List all tenants with pagination and filters (super-admin only)."""
+    query = select(Tenant)
+
+    # Apply filters
+    if is_active is not None:
+        query = query.where(Tenant.is_active == is_active)
+    if billing_status:
+        query = query.where(Tenant.billing_status == billing_status)
+
+    # Get total count
+    total = db.scalar(select(func.count()).select_from(query.subquery()))
+
+    # Apply pagination
+    offset = (page - 1) * page_size
+    tenants = db.scalars(
+        query.order_by(Tenant.created_at.desc()).offset(offset).limit(page_size)
+    ).all()
+
+    # Compute user counts for each tenant
+    tenant_responses = []
+    for tenant in tenants:
+        # Count memberships for this tenant
+        total_users = db.scalar(
+            select(func.count()).where(TenantMembership.tenant_id == tenant.id)
+        )
+        active_users = db.scalar(
+            select(func.count())
+            .select_from(TenantMembership)
+            .join(User, TenantMembership.user_id == User.id)
+            .where(
+                TenantMembership.tenant_id == tenant.id,
+                User.is_active.is_(True),
+            )
+        )
+
+        tenant_responses.append(
+            AdminTenantResponse(
+                id=tenant.id,
+                name=tenant.name,
+                slug=tenant.slug,
+                is_active=tenant.is_active,
+                billing_plan=tenant.billing_plan,
+                billing_cycle=tenant.billing_cycle,
+                billing_status=tenant.billing_status,
+                seat_limit=tenant.seat_limit,
+                base_currency=tenant.base_currency,
+                locale=tenant.locale,
+                created_at=tenant.created_at,
+                updated_at=tenant.updated_at,
+                total_users=total_users or 0,
+                active_users=active_users or 0,
+            )
+        )
+
+    return AdminTenantListResponse(
+        tenants=tenant_responses,
+        total=total or 0,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@app.get("/admin/tenants/{tenant_id}", response_model=AdminTenantResponse)
+def get_tenant_details(
+    tenant_id: uuid.UUID,
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> AdminTenantResponse:
+    """D4: Get single tenant details (super-admin only)."""
+    tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found",
+        )
+
+    # Count users
+    total_users = db.scalar(
+        select(func.count()).where(TenantMembership.tenant_id == tenant.id)
+    )
+    active_users = db.scalar(
+        select(func.count())
+        .select_from(TenantMembership)
+        .join(User, TenantMembership.user_id == User.id)
+        .where(
+            TenantMembership.tenant_id == tenant.id,
+            User.is_active.is_(True),
+        )
+    )
+
+    return AdminTenantResponse(
+        id=tenant.id,
+        name=tenant.name,
+        slug=tenant.slug,
+        is_active=tenant.is_active,
+        billing_plan=tenant.billing_plan,
+        billing_cycle=tenant.billing_cycle,
+        billing_status=tenant.billing_status,
+        seat_limit=tenant.seat_limit,
+        base_currency=tenant.base_currency,
+        locale=tenant.locale,
+        created_at=tenant.created_at,
+        updated_at=tenant.updated_at,
+        total_users=total_users or 0,
+        active_users=active_users or 0,
+    )
+
+
+@app.patch("/admin/tenants/{tenant_id}", response_model=AdminTenantResponse)
+def update_tenant(
+    tenant_id: uuid.UUID,
+    payload: AdminTenantUpdateRequest,
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> AdminTenantResponse:
+    """D4: Update tenant details (super-admin only)."""
+    tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found",
+        )
+
+    # Apply updates (partial update)
+    if payload.name is not None:
+        tenant.name = payload.name
+    if payload.billing_plan is not None:
+        tenant.billing_plan = payload.billing_plan
+    if payload.billing_cycle is not None:
+        tenant.billing_cycle = payload.billing_cycle
+    if payload.billing_status is not None:
+        tenant.billing_status = payload.billing_status
+    if payload.seat_limit is not None:
+        tenant.seat_limit = payload.seat_limit
+
+    db.commit()
+    db.refresh(tenant)
+
+    # Count users
+    total_users = db.scalar(
+        select(func.count()).where(TenantMembership.tenant_id == tenant.id)
+    )
+    active_users = db.scalar(
+        select(func.count())
+        .select_from(TenantMembership)
+        .join(User, TenantMembership.user_id == User.id)
+        .where(
+            TenantMembership.tenant_id == tenant.id,
+            User.is_active.is_(True),
+        )
+    )
+
+    return AdminTenantResponse(
+        id=tenant.id,
+        name=tenant.name,
+        slug=tenant.slug,
+        is_active=tenant.is_active,
+        billing_plan=tenant.billing_plan,
+        billing_cycle=tenant.billing_cycle,
+        billing_status=tenant.billing_status,
+        seat_limit=tenant.seat_limit,
+        base_currency=tenant.base_currency,
+        locale=tenant.locale,
+        created_at=tenant.created_at,
+        updated_at=tenant.updated_at,
+        total_users=total_users or 0,
+        active_users=active_users or 0,
+    )
+
+
+@app.patch("/admin/tenants/{tenant_id}/status", response_model=AdminTenantResponse)
+def update_tenant_status(
+    tenant_id: uuid.UUID,
+    payload: AdminTenantStatusUpdateRequest,
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> AdminTenantResponse:
+    """D4: Suspend or activate tenant (super-admin only)."""
+    tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found",
+        )
+
+    tenant.is_active = payload.is_active
+
+    # Write audit event
+    actor = db.scalar(select(User).where(User.email == _auth.email))
+    write_audit_event(
+        db,
+        tenant_id=tenant_id,
+        action="tenant.status_updated",
+        entity_type="tenant",
+        entity_id=str(tenant_id),
+        details={"is_active": payload.is_active},
+        actor_user_id=actor.id if actor else None,
+    )
+
+    db.commit()
+    db.refresh(tenant)
+
+    # Count users
+    total_users = db.scalar(
+        select(func.count()).where(TenantMembership.tenant_id == tenant.id)
+    )
+    active_users = db.scalar(
+        select(func.count())
+        .select_from(TenantMembership)
+        .join(User, TenantMembership.user_id == User.id)
+        .where(
+            TenantMembership.tenant_id == tenant.id,
+            User.is_active.is_(True),
+        )
+    )
+
+    return AdminTenantResponse(
+        id=tenant.id,
+        name=tenant.name,
+        slug=tenant.slug,
+        is_active=tenant.is_active,
+        billing_plan=tenant.billing_plan,
+        billing_cycle=tenant.billing_cycle,
+        billing_status=tenant.billing_status,
+        seat_limit=tenant.seat_limit,
+        base_currency=tenant.base_currency,
+        locale=tenant.locale,
+        created_at=tenant.created_at,
+        updated_at=tenant.updated_at,
+        total_users=total_users or 0,
+        active_users=active_users or 0,
+    )
+
+
+# ---------------------------------------------------------------------------
+# D5: Platform metrics dashboard
+# ---------------------------------------------------------------------------
+
+
+@app.get("/admin/platform/metrics", response_model=PlatformMetricsResponse)
+def get_platform_metrics(
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> PlatformMetricsResponse:
+    """D5: Platform-wide metrics dashboard (super-admin only).
+    
+    Returns aggregated statistics across all tenants:
+    - Tenant counts and growth
+    - User counts and activity
+    - Subscription plan distribution
+    - Feature flag adoption
+    - Integration health
+    """
+    # Tenant metrics
+    total_tenants = db.scalar(select(func.count()).select_from(Tenant)) or 0
+    active_tenants = db.scalar(
+        select(func.count()).where(Tenant.is_active.is_(True))
+    ) or 0
+    suspended_tenants = total_tenants - active_tenants
+
+    thirty_days_ago = datetime.now(UTC) - timedelta(days=30)
+    seven_days_ago = datetime.now(UTC) - timedelta(days=7)
+
+    new_tenants_30d = db.scalar(
+        select(func.count()).where(Tenant.created_at >= thirty_days_ago)
+    ) or 0
+    new_tenants_7d = db.scalar(
+        select(func.count()).where(Tenant.created_at >= seven_days_ago)
+    ) or 0
+
+    tenant_metrics = TenantMetrics(
+        total_tenants=total_tenants,
+        active_tenants=active_tenants,
+        suspended_tenants=suspended_tenants,
+        new_tenants_last_30_days=new_tenants_30d,
+        new_tenants_last_7_days=new_tenants_7d,
+    )
+
+    # User metrics
+    total_users = db.scalar(select(func.count()).select_from(User)) or 0
+    active_users = db.scalar(
+        select(func.count()).where(User.is_active.is_(True))
+    ) or 0
+
+    new_users_30d = db.scalar(
+        select(func.count()).where(User.created_at >= thirty_days_ago)
+    ) or 0
+    new_users_7d = db.scalar(
+        select(func.count()).where(User.created_at >= seven_days_ago)
+    ) or 0
+
+    users_per_tenant = (
+        float(total_users) / float(total_tenants) if total_tenants > 0 else 0.0
+    )
+
+    user_metrics = UserMetrics(
+        total_users=total_users,
+        active_users=active_users,
+        users_per_tenant_avg=round(users_per_tenant, 2),
+        new_users_last_30_days=new_users_30d,
+        new_users_last_7_days=new_users_7d,
+    )
+
+    # Subscription metrics
+    starter_count = db.scalar(
+        select(func.count()).where(Tenant.billing_plan == "starter")
+    ) or 0
+    professional_count = db.scalar(
+        select(func.count()).where(Tenant.billing_plan == "professional")
+    ) or 0
+    enterprise_count = db.scalar(
+        select(func.count()).where(Tenant.billing_plan == "enterprise")
+    ) or 0
+
+    total_seats_allocated = db.scalar(
+        select(func.sum(Tenant.seat_limit)).select_from(Tenant)
+    ) or 0
+
+    # Count total memberships as seats used
+    total_seats_used = db.scalar(
+        select(func.count()).select_from(TenantMembership)
+    ) or 0
+
+    subscription_metrics = SubscriptionMetrics(
+        starter_count=starter_count,
+        professional_count=professional_count,
+        enterprise_count=enterprise_count,
+        total_seats_allocated=total_seats_allocated,
+        total_seats_used=total_seats_used,
+    )
+
+    # Feature flag metrics
+    total_flags = db.scalar(select(func.count()).select_from(FeatureFlag)) or 0
+    total_overrides = db.scalar(
+        select(func.count()).select_from(TenantFeatureFlag)
+    ) or 0
+
+    # Most enabled features (by plan or override)
+    # Count how many tenants have each feature enabled
+    enabled_features_query = db.execute(
+        select(
+            TenantFeatureFlag.feature_flag_slug,
+            func.count(TenantFeatureFlag.tenant_id).label("tenant_count"),
+        )
+        .where(TenantFeatureFlag.is_enabled.is_(True))
+        .group_by(TenantFeatureFlag.feature_flag_slug)
+        .order_by(func.count(TenantFeatureFlag.tenant_id).desc())
+        .limit(5)
+    )
+    most_enabled = [(row[0], row[1]) for row in enabled_features_query.all()]
+
+    # Most disabled features (by override)
+    disabled_features_query = db.execute(
+        select(
+            TenantFeatureFlag.feature_flag_slug,
+            func.count(TenantFeatureFlag.tenant_id).label("tenant_count"),
+        )
+        .where(TenantFeatureFlag.is_enabled.is_(False))
+        .group_by(TenantFeatureFlag.feature_flag_slug)
+        .order_by(func.count(TenantFeatureFlag.tenant_id).desc())
+        .limit(5)
+    )
+    most_disabled = [(row[0], row[1]) for row in disabled_features_query.all()]
+
+    feature_flag_metrics = FeatureFlagMetrics(
+        total_flags=total_flags,
+        total_overrides=total_overrides,
+        most_enabled_features=most_enabled,
+        most_disabled_features=most_disabled,
+    )
+
+    # Integration metrics
+    total_connectors = db.scalar(
+        select(func.count()).select_from(ConnectorIntegration)
+    ) or 0
+    active_connectors = db.scalar(
+        select(func.count()).where(ConnectorIntegration.status == "connected")
+    ) or 0
+    connectors_with_errors = db.scalar(
+        select(func.count()).where(ConnectorIntegration.error_message.isnot(None))
+    ) or 0
+
+    # Sync failures in last 24 hours
+    twenty_four_hours_ago = datetime.now(UTC) - timedelta(hours=24)
+    failed_sync_jobs_24h = db.scalar(
+        select(func.count()).where(
+            AuditEvent.action == "alert.connector_sync_failure_created",
+            AuditEvent.created_at >= twenty_four_hours_ago,
+        )
+    ) or 0
+
+    # Count total sync jobs (success + failure) in last 24 hours
+    # Success actions: connector.*_synced
+    total_sync_jobs_24h = db.scalar(
+        select(func.count()).where(
+            AuditEvent.entity_type == "connector",
+            AuditEvent.created_at >= twenty_four_hours_ago,
+            AuditEvent.action.like("connector.%_synced"),
+        )
+    ) or 0
+    total_sync_jobs_24h += failed_sync_jobs_24h
+
+    integration_metrics = IntegrationMetrics(
+        total_connectors=total_connectors,
+        active_connectors=active_connectors,
+        connectors_with_errors=connectors_with_errors,
+        total_sync_jobs_last_24h=total_sync_jobs_24h,
+        failed_sync_jobs_last_24h=failed_sync_jobs_24h,
+    )
+
+    return PlatformMetricsResponse(
+        tenant_metrics=tenant_metrics,
+        user_metrics=user_metrics,
+        subscription_metrics=subscription_metrics,
+        feature_flag_metrics=feature_flag_metrics,
+        integration_metrics=integration_metrics,
+        generated_at=datetime.now(UTC),
+        platform_version="1.0.0",
+    )
+
+
+@app.get("/admin/platform/connectors", response_model=ConnectorAvailabilityResponse)
+def get_platform_connector_availability(
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> ConnectorAvailabilityResponse:
+    """D6: Platform-wide connector availability tracking (super-admin only).
+    
+    Returns detailed connector statistics across all tenants:
+    - Total/active/disconnected/error counts
+    - Recent sync failures
+    - Tenant adoption metrics
+    - Per-source breakdown (shopify, meta, google_ads, etc.)
+    """
+    # Overall connector counts
+    total_connectors = db.scalar(
+        select(func.count()).select_from(ConnectorIntegration)
+    ) or 0
+    
+    active_connectors = db.scalar(
+        select(func.count()).where(ConnectorIntegration.status == "connected")
+    ) or 0
+    
+    disconnected_connectors = db.scalar(
+        select(func.count()).where(ConnectorIntegration.status != "connected")
+    ) or 0
+    
+    connectors_with_errors = db.scalar(
+        select(func.count()).where(ConnectorIntegration.error_message.isnot(None))
+    ) or 0
+    
+    # Recent sync failures (last 24 hours)
+    twenty_four_hours_ago = datetime.now(UTC) - timedelta(hours=24)
+    recent_failures = db.scalar(
+        select(func.count()).where(
+            AuditEvent.action == "alert.connector_sync_failure_created",
+            AuditEvent.created_at >= twenty_four_hours_ago,
+        )
+    ) or 0
+    
+    # Tenant adoption
+    tenants_with_connectors = db.scalar(
+        select(func.count(func.distinct(ConnectorIntegration.tenant_id))).select_from(
+            ConnectorIntegration
+        )
+    ) or 0
+    
+    total_tenants = db.scalar(select(func.count()).select_from(Tenant)) or 0
+    tenants_without_connectors = total_tenants - tenants_with_connectors
+    
+    # Per-source breakdown
+    source_stats = db.execute(
+        select(
+            ConnectorIntegration.source,
+            func.count(ConnectorIntegration.id).label("total"),
+            func.sum(
+                func.cast(
+                    ConnectorIntegration.status == "connected", sa.Integer
+                )
+            ).label("connected"),
+            func.sum(
+                func.cast(
+                    ConnectorIntegration.status != "connected", sa.Integer
+                )
+            ).label("disconnected"),
+            func.sum(
+                func.cast(
+                    ConnectorIntegration.error_message.isnot(None), sa.Integer
+                )
+            ).label("errors"),
+            func.count(func.distinct(ConnectorIntegration.tenant_id)).label(
+                "tenants"
+            ),
+        )
+        .group_by(ConnectorIntegration.source)
+        .order_by(func.count(ConnectorIntegration.id).desc())
+    ).all()
+    
+    by_source = [
+        ConnectorSourceBreakdown(
+            source=row[0],
+            total_connectors=row[1],
+            connected_count=row[2] or 0,
+            disconnected_count=row[3] or 0,
+            error_count=row[4] or 0,
+            tenants_using=row[5],
+        )
+        for row in source_stats
+    ]
+    
+    return ConnectorAvailabilityResponse(
+        total_connectors=total_connectors,
+        active_connectors=active_connectors,
+        disconnected_connectors=disconnected_connectors,
+        connectors_with_errors=connectors_with_errors,
+        recent_sync_failures_24h=recent_failures,
+        tenants_with_connectors=tenants_with_connectors,
+        tenants_without_connectors=tenants_without_connectors,
+        by_source=by_source,
+        generated_at=datetime.now(UTC),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tenant notification routing
+# ---------------------------------------------------------------------------
+
+
 @app.get(
     "/tenants/{tenant_id}/notification-routing",
     response_model=NotificationRoutingResponse,
 )
 def get_notification_routing(
     tenant_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: AdminSettingsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> NotificationRoutingResponse:
     tenant = _get_tenant_or_404(db, tenant_id)
@@ -1278,7 +2985,7 @@ def get_notification_routing(
 def upsert_notification_routing(
     tenant_id: uuid.UUID,
     payload: NotificationRoutingUpdateRequest,
-    _auth: AdminTenantDep,
+    _auth: AdminSettingsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> NotificationRoutingResponse:
     tenant = _get_tenant_or_404(db, tenant_id)
@@ -1335,7 +3042,7 @@ def upsert_notification_routing(
 def create_privacy_request(
     tenant_id: uuid.UUID,
     payload: PrivacyRequestCreateRequest,
-    auth: AdminTenantDep,
+    auth: AdminAuditDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> PrivacyRequest:
     tenant = _get_tenant_or_404(db, tenant_id)
@@ -1381,7 +3088,7 @@ def create_privacy_request(
 )
 def list_privacy_requests(
     tenant_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: AdminAuditDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> list[PrivacyRequest]:
     _get_tenant_or_404(db, tenant_id)
@@ -1402,7 +3109,7 @@ def update_privacy_request_status(
     tenant_id: uuid.UUID,
     request_id: uuid.UUID,
     payload: PrivacyRequestStatusUpdateRequest,
-    auth: AdminTenantDep,
+    auth: AdminAuditDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> PrivacyRequest:
     normalized_status = payload.status.strip().lower()
@@ -1459,7 +3166,7 @@ def update_privacy_request_status(
 def start_shopify_oauth(
     tenant_id: uuid.UUID,
     payload: ShopifyOAuthStartRequest,
-    auth: AdminTenantDep,
+    auth: AdminIntegrationsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> ShopifyOAuthStartResponse:
     tenant = _get_tenant_or_404(db, tenant_id)
@@ -1509,7 +3216,7 @@ def start_shopify_oauth(
 def complete_shopify_oauth(
     tenant_id: uuid.UUID,
     payload: ShopifyOAuthCallbackRequest,
-    auth: AdminTenantDep,
+    auth: AdminIntegrationsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> ConnectorResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -1583,7 +3290,7 @@ def complete_shopify_oauth(
 )
 def start_meta_oauth(
     tenant_id: uuid.UUID,
-    auth: AdminTenantDep,
+    auth: AdminIntegrationsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> MetaOAuthStartResponse:
     tenant = _get_tenant_or_404(db, tenant_id)
@@ -1632,7 +3339,7 @@ def start_meta_oauth(
 def complete_meta_oauth(
     tenant_id: uuid.UUID,
     payload: MetaOAuthCallbackRequest,
-    auth: AdminTenantDep,
+    auth: AdminIntegrationsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> ConnectorResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -1704,7 +3411,7 @@ def complete_meta_oauth(
 )
 def start_google_ads_oauth(
     tenant_id: uuid.UUID,
-    auth: AdminTenantDep,
+    auth: AdminIntegrationsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> GoogleAdsOAuthStartResponse:
     tenant = _get_tenant_or_404(db, tenant_id)
@@ -1757,7 +3464,7 @@ def start_google_ads_oauth(
 def complete_google_ads_oauth(
     tenant_id: uuid.UUID,
     payload: GoogleAdsOAuthCallbackRequest,
-    auth: AdminTenantDep,
+    auth: AdminIntegrationsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> ConnectorResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -1835,7 +3542,7 @@ def connect_source_with_api_key(
     tenant_id: uuid.UUID,
     source: str,
     payload: ConnectorApiKeyConnectRequest,
-    auth: AdminTenantDep,
+    auth: AdminIntegrationsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> ConnectorResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -1917,7 +3624,7 @@ def reauthorize_oauth_connector(
     tenant_id: uuid.UUID,
     source: str,
     payload: ConnectorOAuthReauthorizeRequest,
-    auth: AdminTenantDep,
+    auth: AdminIntegrationsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> ConnectorResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -2006,7 +3713,7 @@ def reauthorize_oauth_connector(
 def trigger_connector_manual_resync(
     tenant_id: uuid.UUID,
     source: str,
-    auth: AdminTenantDep,
+    auth: AdminIntegrationsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> ConnectorManualResyncResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -2068,7 +3775,7 @@ def trigger_connector_manual_resync(
 def get_connector_integration_status(
     tenant_id: uuid.UUID,
     source: str,
-    _auth: AdminTenantDep,
+    _auth: AdminIntegrationsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> ConnectorIntegrationStatusResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -2120,6 +3827,677 @@ def get_connector_integration_status(
 
 
 # ---------------------------------------------------------------------------
+# E3: Workspace health aggregation endpoint
+# ---------------------------------------------------------------------------
+
+
+@app.get(
+    "/tenants/{tenant_id}/workspace-health",
+    response_model=WorkspaceHealthResponse,
+)
+def get_workspace_health(
+    tenant_id: uuid.UUID,
+    _auth: AdminIntegrationsDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> WorkspaceHealthResponse:
+    """Get aggregated health status for all connectors in workspace (E3).
+
+    Provides overview of connector health for Brand Admin to monitor
+    integration status and data quality.
+
+    Args:
+        tenant_id: Tenant identifier
+
+    Returns:
+        WorkspaceHealthResponse with aggregated health metrics
+
+    Raises:
+        404: If tenant not found
+    """
+    _get_tenant_or_404(db, tenant_id)
+
+    # Fetch all connectors for tenant
+    connectors = list(
+        db.scalars(
+            select(ConnectorIntegration).where(
+                ConnectorIntegration.tenant_id == tenant_id
+            )
+        ).all()
+    )
+
+    request_now = datetime.now(UTC)
+    connector_summaries: list[ConnectorHealthSummary] = []
+    health_counts = {"healthy": 0, "degraded": 0, "critical": 0, "unknown": 0}
+
+    for connector in connectors:
+        health_status = _compute_connector_health_status(connector, now=request_now)
+        sync_progress = _derive_sync_progress(connector)
+        freshness_label = _derive_freshness_label(connector, now=request_now)
+
+        # Update connector health_status in database
+        connector.health_status = health_status
+
+        connector_summaries.append(
+            ConnectorHealthSummary(
+                connector_id=connector.id,
+                source=connector.source,
+                health_status=health_status,
+                status=connector.status,
+                last_synced_at=connector.last_synced_at,
+                error_message=connector.error_message,
+                sync_progress=sync_progress,
+                freshness_label=freshness_label,
+            )
+        )
+
+        # Track health counts
+        if health_status in health_counts:
+            health_counts[health_status] += 1
+
+    # Commit health_status updates
+    db.commit()
+
+    # Compute overall workspace health
+    overall_health_status = "unknown"
+    if not connectors:
+        overall_health_status = "healthy"  # No connectors is considered healthy
+    elif health_counts["critical"] > 0:
+        overall_health_status = "critical"  # Any critical makes workspace critical
+    elif health_counts["degraded"] > 0:
+        overall_health_status = "degraded"  # Any degraded makes workspace degraded
+    elif health_counts["healthy"] == len(connectors):
+        overall_health_status = "healthy"  # All healthy
+
+    return WorkspaceHealthResponse(
+        tenant_id=tenant_id,
+        overall_health_status=overall_health_status,
+        connectors=connector_summaries,
+        total_connectors=len(connectors),
+        healthy_count=health_counts["healthy"],
+        degraded_count=health_counts["degraded"],
+        critical_count=health_counts["critical"],
+        unknown_count=health_counts["unknown"],
+        last_updated_at=request_now,
+    )
+
+
+# ---------------------------------------------------------------------------
+# E4: Support tickets (FR-092, FR-093, FR-099, FR-100, FR-101)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/support-tickets", response_model=SupportTicketResponse)
+def create_support_ticket(
+    payload: SupportTicketCreate,
+    auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> SupportTicketResponse:
+    """Create a new support ticket (E4, FR-092).
+
+    Args:
+        payload: Ticket creation details
+
+    Returns:
+        Created ticket
+
+    Raises:
+        404: If tenant or creator user not found
+    """
+    # Verify tenant exists
+    _get_tenant_or_404(db, payload.tenant_id)
+
+    # Verify creator exists
+    creator = _get_user_by_email(db, auth.email)
+    if creator is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Creator user not found.",
+        )
+
+    ticket = SupportTicket(
+        tenant_id=payload.tenant_id,
+        priority=payload.priority,
+        issue_type=payload.issue_type,
+        title=payload.title,
+        description=payload.description,
+        created_by_user_id=creator.id,
+    )
+    db.add(ticket)
+    db.commit()
+    db.refresh(ticket)
+
+    return SupportTicketResponse.model_validate(ticket)
+
+
+@app.get("/support-tickets", response_model=SupportTicketListResponse)
+def list_support_tickets(
+    auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    status_filter: str | None = None,
+    priority: str | None = None,
+    tenant_id: uuid.UUID | None = None,
+) -> SupportTicketListResponse:
+    """List support tickets with optional filters (E4, FR-092).
+
+    Args:
+        status_filter: Filter by status (open, in_progress, resolved, closed)
+        priority: Filter by priority (low, medium, high, urgent)
+        tenant_id: Filter by tenant
+
+    Returns:
+        Paginated ticket list
+    """
+    query = select(SupportTicket)
+
+    if status_filter:
+        query = query.where(SupportTicket.status == status_filter)
+    if priority:
+        query = query.where(SupportTicket.priority == priority)
+    if tenant_id:
+        query = query.where(SupportTicket.tenant_id == tenant_id)
+
+    query = query.order_by(SupportTicket.created_at.desc())
+
+    tickets = list(db.scalars(query).all())
+    return SupportTicketListResponse(
+        tickets=[SupportTicketResponse.model_validate(t) for t in tickets],
+        total=len(tickets),
+    )
+
+
+@app.get("/support-tickets/{ticket_id}", response_model=SupportTicketResponse)
+def get_support_ticket(
+    ticket_id: uuid.UUID,
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> SupportTicketResponse:
+    """Get a single support ticket (E4, FR-092).
+
+    Args:
+        ticket_id: Ticket identifier
+
+    Returns:
+        Ticket details
+
+    Raises:
+        404: If ticket not found
+    """
+    ticket = db.get(SupportTicket, ticket_id)
+    if ticket is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Support ticket not found.",
+        )
+
+    return SupportTicketResponse.model_validate(ticket)
+
+
+@app.patch("/support-tickets/{ticket_id}", response_model=SupportTicketResponse)
+def update_support_ticket(
+    ticket_id: uuid.UUID,
+    payload: SupportTicketUpdate,
+    auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> SupportTicketResponse:
+    """Update support ticket (assign, change status, add notes) (E4, FR-093, FR-099).
+
+    Args:
+        ticket_id: Ticket identifier
+        payload: Update fields
+
+    Returns:
+        Updated ticket
+
+    Raises:
+        404: If ticket or assigned user not found
+        409: If trying to update a closed ticket
+    """
+    ticket = db.get(SupportTicket, ticket_id)
+    if ticket is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Support ticket not found.",
+        )
+
+    if ticket.status == "closed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot update a closed ticket.",
+        )
+
+    # Update fields if provided
+    if payload.status is not None:
+        # Don't allow direct close via PATCH (must use close endpoint)
+        if payload.status == "closed":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Use /support-tickets/{id}/close endpoint to close tickets.",
+            )
+        ticket.status = payload.status
+
+    if payload.priority is not None:
+        ticket.priority = payload.priority
+
+    if payload.assigned_to_user_id is not None:
+        # FR-093: Assignment changes logged via updated_at
+        assigned_user = db.get(User, payload.assigned_to_user_id)
+        if assigned_user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assigned user not found.",
+            )
+        ticket.assigned_to_user_id = payload.assigned_to_user_id
+
+    if payload.due_date is not None:
+        ticket.due_date = payload.due_date
+
+    if payload.internal_notes is not None:
+        # FR-099: Append to internal notes with timestamp
+        timestamp = datetime.now(UTC).isoformat()
+        new_note = f"[{timestamp}] {payload.internal_notes}"
+        if ticket.internal_notes:
+            ticket.internal_notes += f"\n\n{new_note}"
+        else:
+            ticket.internal_notes = new_note
+
+    ticket.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(ticket)
+
+    return SupportTicketResponse.model_validate(ticket)
+
+
+@app.patch("/support-tickets/{ticket_id}/close", response_model=SupportTicketResponse)
+def close_support_ticket(
+    ticket_id: uuid.UUID,
+    payload: SupportTicketClose,
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> SupportTicketResponse:
+    """Close support ticket with mandatory resolution (E4, FR-100, FR-101).
+
+    Args:
+        ticket_id: Ticket identifier
+        payload: Resolution summary and category (required)
+
+    Returns:
+        Closed ticket
+
+    Raises:
+        404: If ticket not found
+        409: If ticket already closed
+    """
+    ticket = db.get(SupportTicket, ticket_id)
+    if ticket is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Support ticket not found.",
+        )
+
+    if ticket.status == "closed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ticket is already closed.",
+        )
+
+    # FR-100, FR-101: Mandatory resolution fields
+    ticket.status = "closed"
+    ticket.resolution_summary = payload.resolution_summary
+    ticket.resolution_category = payload.resolution_category
+    ticket.closed_at = datetime.now(UTC)
+    ticket.updated_at = datetime.now(UTC)
+
+    db.commit()
+    db.refresh(ticket)
+
+    return SupportTicketResponse.model_validate(ticket)
+
+
+# ---------------------------------------------------------------------------
+# E5: User notification preferences and inbox (FR-007, FR-108, FR-123-125)
+# ---------------------------------------------------------------------------
+
+
+@app.post(
+    "/user-notification-preferences",
+    response_model=UserNotificationPreferenceResponse,
+)
+def create_user_notification_preference(
+    payload: UserNotificationPreferenceCreate,
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> UserNotificationPreferenceResponse:
+    """Create user notification preference (E5, FR-007, FR-108).
+
+    Args:
+        payload: Preference creation details
+
+    Returns:
+        Created preference
+
+    Raises:
+        409: If preference already exists for this alert category
+    """
+    user = _get_user_by_email(db, auth.email)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    # Check for existing preference
+    existing = db.scalar(
+        select(UserNotificationPreference).where(
+            UserNotificationPreference.user_id == user.id,
+            UserNotificationPreference.tenant_id == payload.tenant_id,
+            UserNotificationPreference.alert_category == payload.alert_category,
+        )
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="Preference already exists for this alert category.",
+        )
+
+    preference = UserNotificationPreference(
+        user_id=user.id,
+        tenant_id=payload.tenant_id,
+        alert_category=payload.alert_category,
+        channel=payload.channel,
+        is_enabled=payload.is_enabled,
+    )
+    db.add(preference)
+    db.commit()
+    db.refresh(preference)
+
+    return UserNotificationPreferenceResponse.model_validate(preference)
+
+
+@app.get(
+    "/user-notification-preferences",
+    response_model=UserNotificationPreferenceListResponse,
+)
+def list_user_notification_preferences(
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    tenant_id: UUID | None = None,
+) -> UserNotificationPreferenceListResponse:
+    """List user's notification preferences (E5, FR-007, FR-108).
+
+    Args:
+        tenant_id: Optional tenant filter
+
+    Returns:
+        List of user preferences
+    """
+    user = _get_user_by_email(db, auth.email)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    stmt = select(UserNotificationPreference).where(
+        UserNotificationPreference.user_id == user.id
+    )
+    if tenant_id:
+        stmt = stmt.where(UserNotificationPreference.tenant_id == tenant_id)
+
+    stmt = stmt.order_by(UserNotificationPreference.alert_category)
+    preferences = list(db.scalars(stmt).all())
+
+    return UserNotificationPreferenceListResponse(
+        preferences=[
+            UserNotificationPreferenceResponse.model_validate(p) for p in preferences
+        ],
+        total=len(preferences),
+    )
+
+
+@app.patch(
+    "/user-notification-preferences/{preference_id}",
+    response_model=UserNotificationPreferenceResponse,
+)
+def update_user_notification_preference(
+    preference_id: UUID,
+    payload: UserNotificationPreferenceUpdate,
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> UserNotificationPreferenceResponse:
+    """Update user notification preference (E5, FR-007, FR-108).
+
+    Args:
+        preference_id: Preference ID
+        payload: Update fields
+
+    Returns:
+        Updated preference
+
+    Raises:
+        404: If preference not found
+    """
+    user = _get_user_by_email(db, auth.email)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    preference = db.scalar(
+        select(UserNotificationPreference).where(
+            UserNotificationPreference.id == preference_id,
+            UserNotificationPreference.user_id == user.id,
+        )
+    )
+    if not preference:
+        raise HTTPException(status_code=404, detail="Preference not found.")
+
+    if payload.channel is not None:
+        preference.channel = payload.channel
+    if payload.is_enabled is not None:
+        preference.is_enabled = payload.is_enabled
+
+    preference.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(preference)
+
+    return UserNotificationPreferenceResponse.model_validate(preference)
+
+
+@app.delete("/user-notification-preferences/{preference_id}")
+def delete_user_notification_preference(
+    preference_id: UUID,
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> Response:
+    """Delete user notification preference (E5, FR-007, FR-108).
+
+    Args:
+        preference_id: Preference ID
+
+    Returns:
+        204 on success
+
+    Raises:
+        404: If preference not found
+    """
+    user = _get_user_by_email(db, auth.email)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    preference = db.scalar(
+        select(UserNotificationPreference).where(
+            UserNotificationPreference.id == preference_id,
+            UserNotificationPreference.user_id == user.id,
+        )
+    )
+    if not preference:
+        raise HTTPException(status_code=404, detail="Preference not found.")
+
+    db.delete(preference)
+    db.commit()
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post("/notifications", response_model=NotificationResponse)
+def create_notification(
+    payload: NotificationCreate,
+    auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> NotificationResponse:
+    """Create notification (E5, FR-123, internal use).
+
+    Args:
+        payload: Notification details
+
+    Returns:
+        Created notification
+    """
+    notification = Notification(
+        tenant_id=payload.tenant_id,
+        user_id=payload.user_id,
+        notification_type=payload.notification_type,
+        title=payload.title,
+        message=payload.message,
+        severity=payload.severity,
+        deep_link=payload.deep_link,
+        context_data=payload.context_data,
+    )
+    db.add(notification)
+    db.commit()
+    db.refresh(notification)
+
+    return NotificationResponse.model_validate(notification)
+
+
+@app.get("/notifications", response_model=NotificationListResponse)
+def list_notifications(
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    status_filter: str | None = None,
+    notification_type: str | None = None,
+    severity: str | None = None,
+    limit: int = Query(default=50, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> NotificationListResponse:
+    """List user notifications (E5, FR-123).
+
+    Args:
+        status_filter: Filter by status (unread, read, dismissed)
+        notification_type: Filter by notification type
+        severity: Filter by severity
+        limit: Max results (default 50, max 100)
+        offset: Pagination offset
+
+    Returns:
+        List of notifications and unread count
+    """
+    user = _get_user_by_email(db, auth.email)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    stmt = select(Notification).where(Notification.user_id == user.id)
+
+    if status_filter:
+        stmt = stmt.where(Notification.status == status_filter)
+    if notification_type:
+        stmt = stmt.where(Notification.notification_type == notification_type)
+    if severity:
+        stmt = stmt.where(Notification.severity == severity)
+
+    stmt = stmt.order_by(Notification.created_at.desc())
+
+    # Count total and unread
+    total_stmt = select(func.count()).select_from(stmt.subquery())
+    total = db.scalar(total_stmt) or 0
+
+    unread_stmt = select(func.count()).where(
+        Notification.user_id == user.id, Notification.status == "unread"
+    )
+    unread_count = db.scalar(unread_stmt) or 0
+
+    # Apply pagination
+    stmt = stmt.limit(limit).offset(offset)
+    notifications = list(db.scalars(stmt).all())
+
+    return NotificationListResponse(
+        notifications=[
+            NotificationResponse.model_validate(n) for n in notifications
+        ],
+        total=total,
+        unread_count=unread_count,
+    )
+
+
+@app.patch("/notifications/{notification_id}/read")
+def mark_notification_read(
+    notification_id: UUID,
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> NotificationResponse:
+    """Mark notification as read (E5, FR-123).
+
+    Args:
+        notification_id: Notification ID
+
+    Returns:
+        Updated notification
+
+    Raises:
+        404: If notification not found
+    """
+    user = _get_user_by_email(db, auth.email)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    notification = db.scalar(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.user_id == user.id,
+        )
+    )
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found.")
+
+    notification.status = "read"
+    notification.read_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(notification)
+
+    return NotificationResponse.model_validate(notification)
+
+
+@app.patch("/notifications/{notification_id}/dismiss")
+def mark_notification_dismissed(
+    notification_id: UUID,
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> NotificationResponse:
+    """Mark notification as dismissed (E5, FR-123).
+
+    Args:
+        notification_id: Notification ID
+
+    Returns:
+        Updated notification
+
+    Raises:
+        404: If notification not found
+    """
+    user = _get_user_by_email(db, auth.email)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    notification = db.scalar(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.user_id == user.id,
+        )
+    )
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found.")
+
+    notification.status = "dismissed"
+    notification.dismissed_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(notification)
+
+    return NotificationResponse.model_validate(notification)
+
+
+# ---------------------------------------------------------------------------
 # Finance: cost drivers and margin drift (T-047)
 # ---------------------------------------------------------------------------
 
@@ -2130,7 +4508,7 @@ def get_connector_integration_status(
 )
 def get_cost_drivers(
     tenant_id: uuid.UUID,
-    _auth: FinanceControllerDep,
+    _auth: FinanceViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> CostDriverListResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -2166,7 +4544,7 @@ def get_cost_drivers(
 )
 def list_margin_drift_thresholds(
     tenant_id: uuid.UUID,
-    _auth: FinanceControllerDep,
+    _auth: FinanceViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> MarginDriftThresholdListResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -2191,7 +4569,7 @@ def list_margin_drift_thresholds(
 def create_margin_drift_threshold(
     tenant_id: uuid.UUID,
     body: MarginDriftThresholdCreateRequest,
-    auth: FinanceControllerDep,
+    auth: FinanceEditCostsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> MarginDriftThresholdResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -2246,7 +4624,7 @@ def update_margin_drift_threshold(
     tenant_id: uuid.UUID,
     threshold_id: uuid.UUID,
     body: MarginDriftThresholdUpdateRequest,
-    auth: FinanceControllerDep,
+    auth: FinanceEditCostsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> MarginDriftThresholdResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -2295,7 +4673,7 @@ def update_margin_drift_threshold(
 def delete_margin_drift_threshold(
     tenant_id: uuid.UUID,
     threshold_id: uuid.UUID,
-    auth: FinanceControllerDep,
+    auth: FinanceEditCostsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
     _get_tenant_or_404(db, tenant_id)
@@ -2332,7 +4710,7 @@ def delete_margin_drift_threshold(
 )
 def get_margin_drift(
     tenant_id: uuid.UUID,
-    _auth: FinanceControllerDep,
+    _auth: FinanceViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> MarginDriftListResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -2413,7 +4791,7 @@ def _write_cost_input_version(
 def get_cost_input(
     tenant_id: uuid.UUID,
     input_id: uuid.UUID,
-    _auth: FinanceControllerDep,
+    _auth: FinanceViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> CostInputResponse:
     """FR-051: Fetch a single cost input to review its confirmation status."""
@@ -2439,7 +4817,7 @@ def get_cost_input(
 )
 def list_cost_inputs(
     tenant_id: uuid.UUID,
-    _auth: FinanceControllerDep,
+    _auth: FinanceViewDep,
     db: Session = Depends(get_db),  # noqa: B008
     input_type: str | None = None,
     pending_confirmation: bool | None = None,
@@ -2475,7 +4853,7 @@ def list_cost_inputs(
 def create_cost_input(
     tenant_id: uuid.UUID,
     body: CostInputCreateRequest,
-    auth: FinanceControllerDep,
+    auth: FinanceEditCostsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> CostInputResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -2542,7 +4920,7 @@ def update_cost_input(
     tenant_id: uuid.UUID,
     input_id: uuid.UUID,
     body: CostInputUpdateRequest,
-    auth: FinanceControllerDep,
+    auth: FinanceEditCostsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> CostInputResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -2621,7 +4999,7 @@ def update_cost_input(
 def confirm_cost_input(
     tenant_id: uuid.UUID,
     input_id: uuid.UUID,
-    auth: FinanceControllerDep,
+    auth: FinanceEditCostsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
     _get_tenant_or_404(db, tenant_id)
@@ -2667,7 +5045,7 @@ def reject_cost_input(
     tenant_id: uuid.UUID,
     input_id: uuid.UUID,
     body: CostInputRejectRequest,
-    auth: FinanceControllerDep,
+    auth: FinanceEditCostsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
     """FR-051: Reject a pending cost input confirmation.
@@ -2720,7 +5098,7 @@ def reject_cost_input(
 def delete_cost_input(
     tenant_id: uuid.UUID,
     input_id: uuid.UUID,
-    auth: FinanceControllerDep,
+    auth: FinanceEditCostsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
     _get_tenant_or_404(db, tenant_id)
@@ -2770,7 +5148,7 @@ def delete_cost_input(
 def get_cost_input_history(
     tenant_id: uuid.UUID,
     input_id: uuid.UUID,
-    _auth: FinanceControllerDep,
+    _auth: FinanceViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> CostInputHistoryResponse:
     _get_tenant_or_404(db, tenant_id)
@@ -2807,7 +5185,7 @@ def get_cost_input_history(
 def create_historical_restatement(
     tenant_id: uuid.UUID,
     body: HistoricalRestatementRequest,
-    auth: FinanceControllerDep,
+    auth: FinanceEditCostsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> HistoricalRestatementResponse:
     """FR-056: Restate historical margin under prior vs new cost input versions.
@@ -2935,7 +5313,7 @@ def create_historical_restatement(
 )
 def get_inventory_risk(
     tenant_id: uuid.UUID,
-    _auth: OperationsManagerDep,
+    _auth: OperationsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
     status_filter: str | None = None,
 ) -> InventoryRiskListResponse:
@@ -2971,7 +5349,7 @@ def get_inventory_risk(
 )
 def list_inventory_risk_thresholds(
     tenant_id: uuid.UUID,
-    _auth: OperationsManagerDep,
+    _auth: OperationsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> InventoryRiskThresholdListResponse:
     rows = list(
@@ -2994,7 +5372,7 @@ def list_inventory_risk_thresholds(
 def create_inventory_risk_threshold(
     tenant_id: uuid.UUID,
     body: InventoryRiskThresholdCreateRequest,
-    auth: OperationsManagerDep,
+    auth: OperationsInventoryDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> InventoryRiskThresholdResponse:
     actor = _get_user_by_email(db, auth.email)
@@ -3045,7 +5423,7 @@ def update_inventory_risk_threshold(
     tenant_id: uuid.UUID,
     threshold_id: uuid.UUID,
     body: InventoryRiskThresholdUpdateRequest,
-    auth: OperationsManagerDep,
+    auth: OperationsInventoryDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> InventoryRiskThresholdResponse:
     row = db.scalar(
@@ -3084,7 +5462,7 @@ def update_inventory_risk_threshold(
 def delete_inventory_risk_threshold(
     tenant_id: uuid.UUID,
     threshold_id: uuid.UUID,
-    auth: OperationsManagerDep,
+    auth: OperationsInventoryDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
     row = db.scalar(
@@ -3121,7 +5499,7 @@ def delete_inventory_risk_threshold(
 )
 def list_warehouse_inventory(
     tenant_id: uuid.UUID,
-    _auth: OperationsManagerDep,
+    _auth: OperationsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> MultiWarehouseInventoryResponse:
     """List inventory health across all warehouses/locations.
@@ -3234,7 +5612,7 @@ def list_warehouse_inventory(
 def get_sku_stockout_impact(
     tenant_id: uuid.UUID,
     sku_id: str,
-    _auth: OperationsManagerDep,
+    _auth: OperationsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> StockoutImpactResponse:
     """Get estimated revenue and repeat purchase impact of SKU stockout."""
@@ -3312,7 +5690,7 @@ def get_sku_stockout_impact(
 def get_sku_logistics_costs(
     tenant_id: uuid.UUID,
     sku_id: str,
-    _auth: OperationsManagerDep,
+    _auth: OperationsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> LogisticsCostBreakdownResponse:
     """Get estimated logistics cost breakdown for a SKU."""
@@ -3386,7 +5764,7 @@ def get_sku_logistics_costs(
 )
 def list_operational_impact_snapshots(
     tenant_id: uuid.UUID,
-    _auth: OperationsManagerDep,
+    _auth: OperationsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
     sku: str | None = None,
 ) -> OperationalImpactListResponse:
@@ -3419,7 +5797,7 @@ def list_operational_impact_snapshots(
 )
 def get_tenant_locale(
     tenant_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: AdminSettingsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> TenantLocaleResponse:
     """Return the tenant's base currency and locale settings."""
@@ -3439,7 +5817,7 @@ def get_tenant_locale(
 def update_tenant_locale(
     tenant_id: uuid.UUID,
     body: TenantLocaleUpdateRequest,
-    auth: AdminTenantDep,
+    auth: AdminSettingsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> TenantLocaleResponse:
     """Update base_currency and/or locale for a tenant."""
@@ -3493,7 +5871,7 @@ def update_tenant_locale(
 )
 def get_tenant_recommendations(
     tenant_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: IntelRecommendationsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
     domain: str | None = None,
     rec_status: str | None = None,
@@ -3525,6 +5903,120 @@ def get_tenant_recommendations(
     )
 
 
+@app.get(
+    "/tenants/{tenant_id}/recommendations/{recommendation_id}",
+    response_model=RecommendationDetailResponse,
+)
+def get_recommendation_detail(
+    tenant_id: uuid.UUID,
+    recommendation_id: uuid.UUID,
+    _auth: IntelRecommendationsViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> RecommendationDetailResponse:
+    """E6 / FR-126: Get recommendation with full provenance of spawned simulations.
+
+    Returns the recommendation along with all simulations that were launched
+    from it, allowing users to see the complete history of scenario analysis
+    for this recommendation.
+    """
+    # Fetch recommendation
+    rec = db.scalar(
+        select(Recommendation).where(
+            Recommendation.id == recommendation_id,
+            Recommendation.tenant_id == tenant_id,
+        )
+    )
+    if rec is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recommendation not found.",
+        )
+
+    # Fetch all simulations spawned from this recommendation
+    simulations = db.scalars(
+        select(Simulation)
+        .where(
+            Simulation.recommendation_id == recommendation_id,
+            Simulation.tenant_id == tenant_id,
+            Simulation.is_deleted.is_(False),
+        )
+        .order_by(Simulation.created_at.desc())
+    ).all()
+
+    # Convert simulations to dict for response
+    simulation_list = [
+        {
+            "id": str(sim.id),
+            "name": sim.name,
+            "description": sim.description,
+            "domain": sim.domain,
+            "simulation_type": sim.simulation_type,
+            "confidence_level": sim.confidence_level,
+            "created_at": sim.created_at.isoformat(),
+            "updated_at": sim.updated_at.isoformat(),
+        }
+        for sim in simulations
+    ]
+
+    return RecommendationDetailResponse(
+        recommendation=RecommendationResponse.model_validate(rec),
+        simulations=simulation_list,
+        simulation_count=len(simulation_list),
+    )
+
+
+@app.get(
+    "/tenants/{tenant_id}/recommendations/{recommendation_id}/simulations",
+    response_model=SimulationListResponse,
+)
+def list_simulations_for_recommendation(
+    tenant_id: uuid.UUID,
+    recommendation_id: uuid.UUID,
+    _auth: IntelSimulationsViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    include_deleted: bool = False,
+) -> SimulationListResponse:
+    """E6 / FR-126: List all simulations spawned from a recommendation.
+
+    Returns all simulations that were created from this recommendation,
+    ordered by creation time (most recent first). Useful for comparing
+    multiple simulation attempts with different parameters.
+
+    Query parameters:
+    - include_deleted: If true, include soft-deleted simulations (default: false)
+    """
+    # Verify recommendation exists
+    rec = db.scalar(
+        select(Recommendation).where(
+            Recommendation.id == recommendation_id,
+            Recommendation.tenant_id == tenant_id,
+        )
+    )
+    if rec is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recommendation not found.",
+        )
+
+    # Build query for simulations
+    stmt = select(Simulation).where(
+        Simulation.recommendation_id == recommendation_id,
+        Simulation.tenant_id == tenant_id,
+    )
+
+    if not include_deleted:
+        stmt = stmt.where(Simulation.is_deleted.is_(False))
+
+    stmt = stmt.order_by(Simulation.created_at.desc())
+
+    simulations = db.scalars(stmt).all()
+
+    return SimulationListResponse(
+        simulations=[SimulationResponse.model_validate(s) for s in simulations],
+        total_count=len(simulations),
+    )
+
+
 @app.patch(
     "/tenants/{tenant_id}/recommendations/{recommendation_id}/status",
     response_model=RecommendationResponse,
@@ -3533,7 +6025,7 @@ def update_recommendation_status(
     tenant_id: uuid.UUID,
     recommendation_id: uuid.UUID,
     body: RecommendationStatusUpdateRequest,
-    auth: AdminTenantDep,
+    auth: IntelRecommendationsReviewDep,
     db: Session = Depends(get_db),  # noqa: B008  # noqa: B008
 ) -> Recommendation:
     """FR-073 / T-059: Transition a recommendation's status.
@@ -3624,7 +6116,7 @@ def update_recommendation_status(
 def launch_simulation_from_recommendation(
     tenant_id: UUID,
     recommendation_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsRunDep,
     db: Session = Depends(get_db),  # noqa: B008
     request_body: RecommendationSimulationLaunchRequest | None = Body(  # noqa: B008
         default=None
@@ -3704,7 +6196,7 @@ def launch_simulation_from_recommendation(
 def generate_narration_for_recommendation(
     tenant_id: UUID,
     recommendation_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelRecommendationsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
     request_body: NarrationRequest | None = Body(  # noqa: B008
         default=None
@@ -3806,7 +6298,7 @@ def generate_narration_for_recommendation(
 )
 def list_recommendation_suppressions(
     tenant_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: AdminSettingsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> SuppressionStateListResponse:
     """FR-074 / T-060: List all suppression states for a tenant."""
@@ -3830,7 +6322,7 @@ def list_recommendation_suppressions(
 def override_recommendation_suppression(
     tenant_id: uuid.UUID,
     rule_id: str,
-    auth: AdminTenantDep,
+    auth: AdminSettingsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> RecommendationSuppressionState:
     """FR-074 / T-060: Lift an active suppression window for a rule.
@@ -3869,7 +6361,7 @@ def override_recommendation_suppression(
 def create_delegation_rule(
     tenant_id: uuid.UUID,
     body: DelegationRuleCreateRequest,
-    auth: AdminTenantDep,
+    auth: AdminSettingsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> DelegationRule:
     """FR-075 / T-061: Create a delegation rule.
@@ -3926,7 +6418,7 @@ def create_delegation_rule(
 )
 def list_delegation_rules(
     tenant_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: AdminSettingsDep,
     db: Session = Depends(get_db),  # noqa: B008
     active_only: bool = False,
 ) -> DelegationRuleListResponse:
@@ -3951,7 +6443,7 @@ def list_delegation_rules(
 def revoke_delegation_rule(
     tenant_id: uuid.UUID,
     delegation_id: uuid.UUID,
-    auth: AdminTenantDep,
+    auth: AdminSettingsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> DelegationRule:
     """FR-075 / T-061: Revoke an active delegation rule.
@@ -4000,7 +6492,7 @@ def revoke_delegation_rule(
 )
 def get_rule_thresholds(
     tenant_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: AdminSettingsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> RuleThresholdListResponse:
     """FR-071 / T-054: List all rule thresholds for a tenant."""
@@ -4025,7 +6517,7 @@ def update_rule_threshold(
     tenant_id: uuid.UUID,
     rule_id: str,
     body: RuleThresholdUpdateRequest,
-    _auth: AdminTenantDep,
+    _auth: AdminSettingsDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> TenantRuleThreshold:
     """FR-071 / T-054: Update the threshold value for a specific rule."""
@@ -4060,7 +6552,7 @@ def update_rule_threshold(
 def create_analysis_view(
     tenant_id: uuid.UUID,
     body: SavedAnalysisViewCreateRequest,
-    auth: AdminTenantDep,
+    auth: IntelInsightsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> SavedAnalysisView:
     """FR-032 / T-064: Create and save a custom analysis view."""
@@ -4101,7 +6593,7 @@ def create_analysis_view(
 )
 def list_analysis_views(
     tenant_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: IntelInsightsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> SavedAnalysisViewListResponse:
     """FR-032 / T-064: List all saved analysis views for a tenant."""
@@ -4125,7 +6617,7 @@ def list_analysis_views(
 def get_analysis_view(
     tenant_id: uuid.UUID,
     view_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: IntelInsightsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> SavedAnalysisView:
     """FR-032 / T-064: Retrieve a specific saved analysis view."""
@@ -4150,7 +6642,7 @@ def get_analysis_view(
 def delete_analysis_view(
     tenant_id: uuid.UUID,
     view_id: uuid.UUID,
-    auth: AdminTenantDep,
+    auth: IntelInsightsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
     """FR-032 / T-064: Delete a saved analysis view."""
@@ -4190,7 +6682,7 @@ def share_analysis_view(
     tenant_id: uuid.UUID,
     view_id: uuid.UUID,
     body: AnalysisViewShareRequest,
-    auth: AdminTenantDep,
+    auth: IntelInsightsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AnalysisViewShareListResponse:
     """FR-034 / T-064: Share an analysis view with recipients."""
@@ -4258,7 +6750,7 @@ def share_analysis_view(
 def list_analysis_view_shares(
     tenant_id: uuid.UUID,
     view_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: IntelInsightsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AnalysisViewShareListResponse:
     """FR-034 / T-064: List all shares for a specific analysis view."""
@@ -4294,7 +6786,7 @@ def list_analysis_view_shares(
 def export_view_download(
     tenant_id: uuid.UUID,
     view_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: IntelInsightsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
     format: str = "csv",
 ) -> Response:
@@ -4380,7 +6872,7 @@ def create_annotation(
     tenant_id: uuid.UUID,
     view_id: uuid.UUID,
     req: AnnotationCreateRequest,
-    _auth: AdminTenantDep,
+    _auth: IntelInsightsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AnalysisAnnotation:
     """FR-033, FR-045, FR-068 / T-065: Create annotation on analysis view."""
@@ -4436,7 +6928,7 @@ def create_annotation(
 def list_annotations(
     tenant_id: uuid.UUID,
     view_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: IntelInsightsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
     event_date_min: date | None = None,
     event_date_max: date | None = None,
@@ -4482,7 +6974,7 @@ def delete_annotation(
     tenant_id: uuid.UUID,
     view_id: uuid.UUID,
     annotation_id: uuid.UUID,
-    _auth: AdminTenantDep,
+    _auth: IntelInsightsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
     """FR-033, FR-045, FR-068 / T-065: Delete annotation (immutable)."""
@@ -4522,7 +7014,7 @@ def delete_annotation(
 def create_cohort_snapshot(
     tenant_id: uuid.UUID,
     req: CohortSnapshotCreateRequest,
-    _auth: AdminTenantDep,
+    _auth: RetentionViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> CohortSnapshot:
     """FR-037 / T-066: Create a cohort snapshot for comparison."""
@@ -4568,7 +7060,7 @@ def create_cohort_snapshot(
 def compare_cohorts(
     tenant_id: uuid.UUID,
     req: CohortComparisonRequest,
-    _auth: AdminTenantDep,
+    _auth: RetentionAnalyzeDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> CohortComparisonResponse:
     """FR-037 / T-066: Compare cohorts side-by-side within date range and grain."""
@@ -4597,7 +7089,7 @@ def get_acquisition_context(
     tenant_id: uuid.UUID,
     start_date: date,
     end_date: date,
-    _auth: OperationsManagerDep,
+    _auth: RetentionViewDep,
     cohort_grain: str = "month",
     channel: str | None = None,
     db: Session = Depends(get_db),  # noqa: B008
@@ -4685,7 +7177,8 @@ def get_acquisition_context(
 def create_custom_segment(
     tenant_id: uuid.UUID,
     req: CustomSegmentCreate,
-    _auth: OperationsManagerDep,
+    _auth: RetentionViewDep,
+    _feature: RequireCustomSegments,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> CustomSegmentResponse:
     """FR-044 / T-071: Create a custom customer segment.
@@ -4732,7 +7225,8 @@ def create_custom_segment(
 )
 def list_custom_segments(
     tenant_id: uuid.UUID,
-    _auth: OperationsManagerDep,
+    _auth: RetentionViewDep,
+    _feature: RequireCustomSegments,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> CustomSegmentListResponse:
     """FR-044 / T-071: List custom segments for a tenant."""
@@ -4762,7 +7256,8 @@ def list_custom_segments(
 def get_custom_segment(
     tenant_id: uuid.UUID,
     segment_id: uuid.UUID,
-    _auth: OperationsManagerDep,
+    _auth: RetentionViewDep,
+    _feature: RequireCustomSegments,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> CustomSegmentResponse:
     """FR-044 / T-071: Get a custom segment by ID."""
@@ -4795,7 +7290,8 @@ def update_custom_segment(
     tenant_id: uuid.UUID,
     segment_id: uuid.UUID,
     req: CustomSegmentUpdate,
-    _auth: OperationsManagerDep,
+    _auth: RetentionViewDep,
+    _feature: RequireCustomSegments,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> CustomSegmentResponse:
     """FR-044 / T-071: Update a custom segment."""
@@ -4849,7 +7345,8 @@ def update_custom_segment(
 def delete_custom_segment(
     tenant_id: uuid.UUID,
     segment_id: uuid.UUID,
-    _auth: OperationsManagerDep,
+    _auth: RetentionViewDep,
+    _feature: RequireCustomSegments,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
     """FR-044 / T-071: Delete a custom segment."""
@@ -4899,7 +7396,7 @@ def delete_custom_segment(
 def create_alert_threshold(
     tenant_id: UUID,
     payload: AlertThresholdCreate,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AlertThreshold:
     """Create a new alert threshold for a metric in this tenant."""
@@ -4947,7 +7444,7 @@ def create_alert_threshold(
 )
 def list_alert_thresholds(
     tenant_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> dict[str, object]:
     """List all alert thresholds for a tenant."""
@@ -4976,7 +7473,7 @@ def list_alert_thresholds(
 def get_alert_threshold(
     tenant_id: UUID,
     threshold_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AlertThreshold:
     """Get a specific alert threshold."""
@@ -5002,7 +7499,7 @@ def update_alert_threshold(
     tenant_id: UUID,
     threshold_id: UUID,
     payload: AlertThresholdUpdate,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AlertThreshold:
     """Update an alert threshold."""
@@ -5050,7 +7547,7 @@ def update_alert_threshold(
 def delete_alert_threshold(
     tenant_id: UUID,
     threshold_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
     """Delete an alert threshold."""
@@ -5089,7 +7586,7 @@ def delete_alert_threshold(
 def create_alert_recipient(
     tenant_id: UUID,
     payload: AlertRecipientCreate,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AlertRecipient:
     """Create a new alert recipient for a user."""
@@ -5134,7 +7631,7 @@ def create_alert_recipient(
 )
 def list_alert_recipients(
     tenant_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> dict[str, object]:
     """List all alert recipients for a tenant."""
@@ -5163,7 +7660,7 @@ def list_alert_recipients(
 def get_alert_recipient(
     tenant_id: UUID,
     recipient_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AlertRecipient:
     """Get a specific alert recipient."""
@@ -5189,7 +7686,7 @@ def update_alert_recipient(
     tenant_id: UUID,
     recipient_id: UUID,
     payload: AlertRecipientUpdate,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AlertRecipient:
     """Update an alert recipient."""
@@ -5234,7 +7731,7 @@ def update_alert_recipient(
 def delete_alert_recipient(
     tenant_id: UUID,
     recipient_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
     """Delete an alert recipient."""
@@ -5275,7 +7772,7 @@ def delete_alert_recipient(
 def acknowledge_alert(
     tenant_id: UUID,
     payload: AlertAcknowledgementCreate,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AlertAcknowledgement:
     """Acknowledge an alert.
@@ -5355,7 +7852,7 @@ def acknowledge_alert(
 def dismiss_alert(
     tenant_id: UUID,
     payload: AlertDismissalCreate,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AlertDismissal:
     """Dismiss an alert.
@@ -5439,7 +7936,7 @@ def dismiss_alert(
 def create_escalation_rule(
     tenant_id: UUID,
     payload: EscalationRuleCreate,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> EscalationRule:
     """Create an escalation rule for unacknowledged alerts.
@@ -5523,7 +8020,7 @@ def create_escalation_rule(
 )
 def list_escalation_rules(
     tenant_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> dict[str, object]:
     """List all escalation rules for a tenant."""
@@ -5552,7 +8049,7 @@ def list_escalation_rules(
 def get_escalation_rule(
     tenant_id: UUID,
     rule_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> EscalationRule:
     """Get a specific escalation rule."""
@@ -5579,7 +8076,7 @@ def update_escalation_rule(
     tenant_id: UUID,
     rule_id: UUID,
     payload: EscalationRuleUpdate,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> EscalationRule:
     """Update an escalation rule."""
@@ -5649,7 +8146,7 @@ def update_escalation_rule(
 def delete_escalation_rule(
     tenant_id: UUID,
     rule_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> None:
     """Delete an escalation rule."""
@@ -5709,7 +8206,7 @@ def delete_escalation_rule(
 )
 def list_alert_events(
     tenant_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
     skip: int = 0,
     limit: int = 100,
@@ -5807,7 +8304,7 @@ def list_alert_events(
 def get_alert_history(
     tenant_id: UUID,
     alert_id: str,
-    _auth: OperationsManagerDep,
+    _auth: IntelAlertsManageDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AlertHistoryResponse:
     """Get complete immutable history for a specific alert.
@@ -5867,7 +8364,7 @@ def get_alert_history(
 )
 def list_email_deliveries(
     tenant_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: AdminAuditDep,
     db: Session = Depends(get_db),  # noqa: B008
     skip: int = 0,
     limit: int = 100,
@@ -5969,7 +8466,7 @@ def list_email_deliveries(
 def get_alert_email_delivery_history(
     tenant_id: UUID,
     alert_id: str,
-    _auth: OperationsManagerDep,
+    _auth: AdminAuditDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> EmailDeliveryHistoryResponse:
     """Get complete email delivery history for a specific alert.
@@ -6042,7 +8539,8 @@ def get_alert_email_delivery_history(
 def get_simulation_by_recommendation(
     tenant_id: UUID,
     recommendation_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsViewDep,
+    _feature: RequireSimulations,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> SimulationResponse:
     """Retrieve the simulation generated for a specific recommendation.
@@ -6081,7 +8579,8 @@ def get_simulation_by_recommendation(
 )
 def list_simulations(
     tenant_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsViewDep,
+    _feature: RequireSimulations,
     db: Session = Depends(get_db),  # noqa: B008
     skip: int = 0,
     limit: int = 100,
@@ -6139,7 +8638,8 @@ def list_simulations(
 def create_growth_simulation(
     tenant_id: UUID,
     input_data: GrowthSimulationInput,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsRunDep,
+    _feature: RequireSimulations,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> SimulationResponse:
     """Simulate growth channel budget reallocation.
@@ -6190,7 +8690,8 @@ def create_growth_simulation(
 def create_retention_simulation(
     tenant_id: UUID,
     input_data: RetentionSimulationInput,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsRunDep,
+    _feature: RequireSimulations,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> SimulationResponse:
     """Simulate retention intervention (offer/response/timing).
@@ -6239,7 +8740,8 @@ def create_retention_simulation(
 def create_finance_simulation(
     tenant_id: UUID,
     input_data: FinanceSimulationInput,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsRunDep,
+    _feature: RequireSimulations,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> SimulationResponse:
     """Simulate cost input changes (shipping, returns, fees, VAT).
@@ -6288,7 +8790,8 @@ def create_finance_simulation(
 def create_operations_simulation(
     tenant_id: UUID,
     input_data: OperationsSimulationInput,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsRunDep,
+    _feature: RequireSimulations,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> SimulationResponse:
     """Simulate inventory reorder policy changes.
@@ -6336,7 +8839,8 @@ def create_operations_simulation(
 def create_executive_simulation(
     tenant_id: UUID,
     input_data: ExecutiveSimulationInput,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsRunDep,
+    _feature: RequireSimulations,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> SimulationResponse:
     """Simulate strategic what-if scenarios (pricing, channel mix, demand).
@@ -6383,7 +8887,8 @@ def create_executive_simulation(
 def compare_simulations(
     tenant_id: UUID,
     request_body: SimulationComparisonRequest,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsViewDep,
+    _feature: RequireSimulations,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> dict:
     """Compare multiple simulations side-by-side with confidence warnings.
@@ -6423,7 +8928,8 @@ def compare_simulations(
 def get_simulation_detail(
     tenant_id: UUID,
     simulation_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsViewDep,
+    _feature: RequireSimulations,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> SimulationDetailResponse:
     """Retrieve a saved simulation with all its scenarios.
@@ -6471,12 +8977,69 @@ def get_simulation_detail(
 
 
 @app.get(
+    "/tenants/{tenant_id}/simulations/{simulation_id}/chart-data",
+    response_model=SimulationChartDataResponse,
+)
+def get_simulation_chart_data(
+    tenant_id: UUID,
+    simulation_id: UUID,
+    _auth: IntelSimulationsViewDep,
+    _feature: RequireSimulations,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> dict:
+    """Get chart-ready data for frontend visualization.
+
+    E7: Returns structured data optimized for chart libraries:
+    - Time-series: Projected metric values over time periods for line charts
+    - Waterfall: Baseline → changes → final outcome for waterfall charts
+    - Metric deltas: Side-by-side scenario comparison for bar charts
+
+    All data is pre-calculated and formatted for direct consumption by
+    frontend chart components (Chart.js, Recharts, D3, etc.).
+
+    Args:
+        tenant_id: Tenant identifier
+        simulation_id: Simulation identifier
+
+    Returns:
+        SimulationChartDataResponse with time_series, waterfall, and metric_deltas
+
+    Raises:
+        404: If tenant or simulation not found
+    """
+    # Validate tenant exists
+    tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    if tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found.",
+        )
+
+    from backend.app.simulation_service import SimulationService
+    service = SimulationService(db)
+
+    try:
+        chart_data = service.get_simulation_chart_data(
+            tenant_id=tenant_id,
+            simulation_id=simulation_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return chart_data
+
+
+@app.get(
     "/tenants/{tenant_id}/simulations",
     response_model=SimulationListResponse,
 )
 def list_simulations_for_tenant(
     tenant_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsViewDep,
+    _feature: RequireSimulations,
     db: Session = Depends(get_db),  # noqa: B008
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
@@ -6521,6 +9084,252 @@ def list_simulations_for_tenant(
     )
 
 
+# ---------------------------------------------------------------------------
+# E2: Simulation rename/duplicate/delete endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.patch(
+    "/tenants/{tenant_id}/simulations/{simulation_id}",
+    response_model=SimulationResponse,
+)
+def update_simulation(
+    tenant_id: UUID,
+    simulation_id: UUID,
+    body: SimulationUpdateRequest,
+    _auth: IntelSimulationsViewDep,
+    _feature: RequireSimulations,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> Simulation:
+    """Update simulation name and/or description (E2 rename).
+
+    Allows users to rename simulations and add descriptive notes for
+    organization and future reference.
+
+    Args:
+        tenant_id: Tenant identifier
+        simulation_id: Simulation identifier
+        body: SimulationUpdateRequest with name/description fields
+
+    Returns:
+        Updated SimulationResponse
+
+    Raises:
+        404: If tenant or simulation not found
+        400: If simulation is deleted
+    """
+    tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    if tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found.",
+        )
+
+    simulation = db.scalar(
+        select(Simulation).where(
+            Simulation.id == simulation_id,
+            Simulation.tenant_id == tenant_id,
+        )
+    )
+    if simulation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Simulation not found.",
+        )
+
+    if simulation.is_deleted:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot update a deleted simulation.",
+        )
+
+    # Update fields if provided
+    if body.name is not None:
+        simulation.name = body.name
+    if body.description is not None:
+        simulation.description = body.description
+
+    db.commit()
+    db.refresh(simulation)
+
+    return simulation
+
+
+@app.post(
+    "/tenants/{tenant_id}/simulations/{simulation_id}/duplicate",
+    response_model=SimulationDuplicateResponse,
+)
+def duplicate_simulation(
+    tenant_id: UUID,
+    simulation_id: UUID,
+    body: SimulationDuplicateRequest,
+    _auth: IntelSimulationsViewDep,
+    _feature: RequireSimulations,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> SimulationDuplicateResponse:
+    """Duplicate a simulation (E2 duplicate).
+
+    Creates a copy of the simulation with all scenarios. Useful for
+    testing variations or preserving historical baselines.
+
+    Args:
+        tenant_id: Tenant identifier
+        simulation_id: Simulation identifier to duplicate
+        body: SimulationDuplicateRequest with optional name/description
+
+    Returns:
+        SimulationDuplicateResponse with original and duplicate IDs
+
+    Raises:
+        404: If tenant or simulation not found
+        400: If simulation is deleted
+    """
+    tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    if tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found.",
+        )
+
+    original = db.scalar(
+        select(Simulation).where(
+            Simulation.id == simulation_id,
+            Simulation.tenant_id == tenant_id,
+        )
+    )
+    if original is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Simulation not found.",
+        )
+
+    if original.is_deleted:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot duplicate a deleted simulation.",
+        )
+
+    # Create duplicate
+    duplicate = Simulation(
+        tenant_id=original.tenant_id,
+        recommendation_id=original.recommendation_id,
+        name=body.name or (f"Copy of {original.name}" if original.name else None),
+        description=body.description or original.description,
+        domain=original.domain,
+        simulation_type="manual",  # Duplicates are always manual
+        x_star=original.x_star.copy() if original.x_star else {},
+        confidence_level=original.confidence_level,
+        data_freshness_signal=original.data_freshness_signal,
+        metric_completeness_signal=original.metric_completeness_signal,
+        baseline_scenario=original.baseline_scenario.copy()
+        if original.baseline_scenario
+        else {},
+        upside_scenario=original.upside_scenario.copy()
+        if original.upside_scenario
+        else {},
+        downside_scenario=original.downside_scenario.copy()
+        if original.downside_scenario
+        else {},
+        simulation_metadata={
+            **(original.simulation_metadata or {}),
+            "duplicated_from": str(original.id),
+            "duplicated_at": datetime.now(UTC).isoformat(),
+        },
+    )
+    db.add(duplicate)
+    db.flush()
+
+    # Duplicate scenarios
+    original_scenarios = db.scalars(
+        select(Scenario).where(Scenario.simulation_id == original.id)
+    ).all()
+
+    for orig_scenario in original_scenarios:
+        dup_scenario = Scenario(
+            simulation_id=duplicate.id,
+            scenario_type=orig_scenario.scenario_type,
+            input_assumptions=orig_scenario.input_assumptions.copy()
+            if orig_scenario.input_assumptions
+            else {},
+            output_metrics=orig_scenario.output_metrics.copy()
+            if orig_scenario.output_metrics
+            else {},
+            impact_deltas=orig_scenario.impact_deltas.copy()
+            if orig_scenario.impact_deltas
+            else {},
+            confidence_score=orig_scenario.confidence_score,
+            rationale=orig_scenario.rationale,
+        )
+        db.add(dup_scenario)
+
+    db.commit()
+    db.refresh(duplicate)
+
+    return SimulationDuplicateResponse(
+        original_id=original.id,
+        duplicate_id=duplicate.id,
+        duplicate=SimulationResponse.model_validate(duplicate),
+    )
+
+
+@app.delete(
+    "/tenants/{tenant_id}/simulations/{simulation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_simulation(
+    tenant_id: UUID,
+    simulation_id: UUID,
+    _auth: IntelSimulationsViewDep,
+    _feature: RequireSimulations,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> Response:
+    """Soft delete a simulation (E2 delete).
+
+    Marks simulation as deleted while preserving audit trail. Deleted
+    simulations are excluded from list views but remain in database.
+
+    Args:
+        tenant_id: Tenant identifier
+        simulation_id: Simulation identifier
+
+    Returns:
+        204 No Content on success
+
+    Raises:
+        404: If tenant or simulation not found
+        400: If simulation is already deleted
+    """
+    tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    if tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found.",
+        )
+
+    simulation = db.scalar(
+        select(Simulation).where(
+            Simulation.id == simulation_id,
+            Simulation.tenant_id == tenant_id,
+        )
+    )
+    if simulation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Simulation not found.",
+        )
+
+    if simulation.is_deleted:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Simulation is already deleted.",
+        )
+
+    simulation.is_deleted = True
+    db.commit()
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @app.post(
     "/tenants/{tenant_id}/simulations/{simulation_id}/export",
 )
@@ -6528,7 +9337,8 @@ def export_simulation(
     tenant_id: UUID,
     simulation_id: UUID,
     request_body: SimulationExportRequest,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsViewDep,
+    _feature: RequireSimulations,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> StreamingResponse:
     """Generate and download a simulation export (PDF or CSV).
@@ -6600,7 +9410,8 @@ def share_simulation_export(
     tenant_id: UUID,
     simulation_id: UUID,
     request_body: ExportShareRequest,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsViewDep,
+    _feature: RequireSimulations,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> ExportShareResponse:
     """Share a simulation export with a recipient.
@@ -6703,7 +9514,7 @@ def share_simulation_export(
 )
 def list_shared_exports(
     tenant_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsViewDep,
     skip: int = Query(0, ge=0),  # noqa: B008
     limit: int = Query(50, ge=1, le=100),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
@@ -6786,7 +9597,7 @@ def list_shared_exports(
 def revoke_export_share(
     tenant_id: UUID,
     share_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> ExportShareResponse:
     """Revoke an export share.
@@ -6853,7 +9664,7 @@ def revoke_export_share(
 def generate_export_download_link(
     tenant_id: UUID,
     share_id: UUID,
-    _auth: OperationsManagerDep,
+    _auth: IntelSimulationsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> GeneratedExportLinkResponse:
     """T-087: Generate a signed download link for an export share.
@@ -7009,4 +9820,1245 @@ def download_export_by_link(
             "Content-Disposition": f"attachment; filename={file_name}",
         },
     )
+
+
+# =============================================================================
+# Permissions & Roles Endpoints
+# =============================================================================
+
+
+@app.get("/permissions", response_model=PermissionCatalogResponse)
+def get_permissions_catalog(
+    auth: AuthDep,
+) -> PermissionCatalogResponse:
+    """Get catalog of all available permissions."""
+    permissions_list = [
+        PermissionInfo(
+            permission=permission,
+            description=perm.PERMISSION_DESCRIPTIONS.get(permission, ""),
+        )
+        for permission in perm.ALL_PERMISSIONS
+    ]
+    return PermissionCatalogResponse(permissions=permissions_list)
+
+
+@app.get("/kpis", response_model=KPICatalogResponse)
+def get_kpi_catalog(
+    auth: AuthDep,
+    domain: str | None = Query(  # noqa: B008
+        None,
+        description=(
+            "Filter by domain (executive, growth, retention, "
+            "finance, operations, intelligence)"
+        ),
+    ),
+) -> KPICatalogResponse:
+    """Get catalog of all KPI metadata.
+    
+    Returns definitions, formulas, data sources, and guidance for all KPIs.
+    Optionally filter by domain to get KPIs for a specific persona.
+    
+    Args:
+        auth: Authenticated user context
+        domain: Optional domain filter (executive, growth, retention,
+            finance, operations, intelligence)
+    
+    Returns:
+        KPICatalogResponse with list of KPI metadata
+    """
+    if domain:
+        kpi_dict = kpis.get_kpis_by_domain(domain)
+    else:
+        kpi_dict = kpis.get_all_kpis()
+    
+    kpi_list = [
+        KPIMetadataResponse(
+            key=metadata["key"],
+            name=metadata["name"],
+            description=metadata["description"],
+            formula=metadata["formula"],
+            unit=metadata["unit"],
+            domain=metadata["domain"],
+            data_sources=metadata["data_sources"],
+            good_direction=metadata["good_direction"],
+            target_range=metadata["target_range"],
+        )
+        for metadata in kpi_dict.values()
+    ]
+    
+    return KPICatalogResponse(kpis=kpi_list, total=len(kpi_list))
+
+
+@app.get(
+    "/tenants/{tenant_id}/executive/overview",
+    response_model=ExecutiveOverviewResponse,
+)
+def get_executive_overview(
+    tenant_id: UUID,
+    auth: ExecutiveViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    period_start: date | None = Query(  # noqa: B008
+        None, description="Start date for analysis period (inclusive)"
+    ),
+    period_end: date | None = Query(  # noqa: B008
+        None, description="End date for analysis period (inclusive)"
+    ),
+) -> ExecutiveOverviewResponse:
+    """Get executive overview dashboard with key financial and operational metrics.
+
+    Returns comprehensive business health view including:
+    - Primary financial metrics (revenue, profit, contribution margin)
+    - Growth metrics (revenue growth rate)
+    - Key performance indicators (ROAS, CAC payback, repeat rate, return rate)
+    - Business health indicators across all functional areas
+    - Cross-team performance rollup
+
+    Args:
+        tenant_id: Tenant UUID
+        auth: Authenticated user with executive.view permission
+        db: Database session
+        period_start: Start of analysis period (defaults to 30 days ago)
+        period_end: End of analysis period (defaults to today)
+
+    Returns:
+        ExecutiveOverviewResponse with calculated metrics and health indicators
+    """
+    # Verify tenant access
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Validate permission tenant matches requested tenant
+    membership = db.scalar(
+        select(TenantMembership)
+        .join(User)
+        .where(User.email == auth.email)
+        .where(TenantMembership.tenant_id == tenant_id)
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Access denied to this tenant")
+
+    # Default to last 30 days if no period specified
+    if period_end is None:
+        period_end = date.today()
+    if period_start is None:
+        period_start = period_end - timedelta(days=30)
+
+    # Validate period
+    if period_start > period_end:
+        raise HTTPException(
+            status_code=400,
+            detail="period_start must be before or equal to period_end",
+        )
+
+    # Calculate overview
+    overview = executive_service.calculate_executive_overview(
+        db=db,
+        tenant_id=tenant_id,
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    return overview
+
+
+@app.get(
+    "/tenants/{tenant_id}/growth/dashboard",
+    response_model=GrowthDashboardResponse,
+)
+def get_growth_dashboard(
+    tenant_id: UUID,
+    auth: GrowthViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    period_start: date | None = Query(  # noqa: B008
+        None, description="Start date for analysis period (inclusive)"
+    ),
+    period_end: date | None = Query(  # noqa: B008
+        None, description="End date for analysis period (inclusive)"
+    ),
+) -> GrowthDashboardResponse:
+    """Get growth dashboard with channel and campaign performance metrics.
+
+    Returns comprehensive marketing efficiency view including:
+    - Blended metrics (total spend, ROAS, CAC)
+    - Per-channel breakdown (Meta, Google Ads)
+    - Campaign performance (top performers and underperforming campaigns)
+    - Attribution and profitability metrics
+
+    Args:
+        tenant_id: Tenant UUID
+        auth: Authenticated user with growth.view permission
+        db: Database session
+        period_start: Start of analysis period (defaults to 30 days ago)
+        period_end: End of analysis period (defaults to today)
+
+    Returns:
+        GrowthDashboardResponse with channel and campaign metrics
+    """
+    # Verify tenant access
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Validate permission tenant matches requested tenant
+    membership = db.scalar(
+        select(TenantMembership)
+        .join(User)
+        .where(User.email == auth.email)
+        .where(TenantMembership.tenant_id == tenant_id)
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Access denied to this tenant")
+
+    # Default to last 30 days if no period specified
+    if period_end is None:
+        period_end = date.today()
+    if period_start is None:
+        period_start = period_end - timedelta(days=30)
+
+    # Validate period
+    if period_start > period_end:
+        raise HTTPException(
+            status_code=400,
+            detail="period_start must be before or equal to period_end",
+        )
+
+    # Calculate dashboard
+    dashboard = growth_service.calculate_growth_dashboard(
+        db=db,
+        tenant_id=tenant_id,
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    return dashboard
+
+
+@app.get(
+    "/tenants/{tenant_id}/retention/dashboard",
+    response_model=RetentionDashboardResponse,
+)
+def get_retention_dashboard(
+    tenant_id: UUID,
+    auth: RetentionViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    period_start: date | None = Query(None),  # noqa: B008
+    period_end: date | None = Query(None),  # noqa: B008
+) -> RetentionDashboardResponse:
+    """Get retention dashboard for a tenant.
+
+    Returns retention metrics including:
+    - Repeat purchase rate and customer lifetime value
+    - Cohort retention analysis
+    - Customer segment breakdown
+    - Churn risk indicators
+
+    Args:
+        tenant_id: Tenant UUID
+        auth: Authenticated user with retention.view permission
+        db: Database session
+        period_start: Optional start date (defaults to 90 days ago)
+        period_end: Optional end date (defaults to today)
+
+    Returns:
+        RetentionDashboardResponse with retention metrics
+
+    Raises:
+        HTTPException: 404 if tenant not found, 400 if invalid date range
+    """
+    # Verify tenant access
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Validate permission tenant matches requested tenant
+    membership = db.scalar(
+        select(TenantMembership)
+        .join(User)
+        .where(User.email == auth.email)
+        .where(TenantMembership.tenant_id == tenant_id)
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Access denied to this tenant")
+
+    # Default period: last 90 days
+    if period_end is None:
+        period_end = date.today()
+    if period_start is None:
+        period_start = period_end - timedelta(days=90)
+
+    # Validate period
+    if period_start > period_end:
+        raise HTTPException(
+            status_code=400,
+            detail="period_start must be before or equal to period_end",
+        )
+
+    # Calculate dashboard
+    dashboard = retention_service.calculate_retention_dashboard(
+        db=db,
+        tenant_id=tenant_id,
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    return dashboard
+
+
+# =============================================================================
+# TREND / TIME-SERIES ENDPOINTS
+# =============================================================================
+
+
+@app.get(
+    "/tenants/{tenant_id}/executive/trend",
+    response_model=ExecutiveTrendResponse,
+)
+def get_executive_trend(
+    tenant_id: UUID,
+    auth: ExecutiveViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    window: date_utils.DateWindow | None = Query(  # noqa: B008
+        date_utils.DateWindow.NINETY_DAYS,
+        description="Preset date window",
+    ),
+    start_date: date | None = Query(None),  # noqa: B008
+    end_date: date | None = Query(None),  # noqa: B008
+) -> ExecutiveTrendResponse:
+    """Get executive KPI trend (time-series) for a tenant.
+
+    Returns time-series data points from ExecutiveKpiSnapshot for the
+    specified date range. Useful for charting KPI trends over time.
+
+    Args:
+        tenant_id: Tenant UUID
+        auth: Authenticated user with executive.view permission
+        db: Database session
+        window: Preset date window (default: 90d)
+        start_date: Custom start date (required if window=custom)
+        end_date: Custom end date (required if window=custom)
+
+    Returns:
+        ExecutiveTrendResponse with time-series data points
+
+    Raises:
+        HTTPException: 404 if tenant not found, 400 if invalid date range
+    """
+    # Verify tenant access
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Validate permission tenant matches requested tenant
+    membership = db.scalar(
+        select(TenantMembership)
+        .join(User)
+        .where(User.email == auth.email)
+        .where(TenantMembership.tenant_id == tenant_id)
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Access denied to this tenant")
+
+    # Parse date range
+    params = date_utils.DateRangeParams(
+        window=window, start_date=start_date, end_date=end_date
+    )
+    period_start, period_end = date_utils.calculate_date_range(params)
+
+    # Query snapshots within date range
+    snapshots = db.scalars(
+        select(ExecutiveKpiSnapshot)
+        .where(ExecutiveKpiSnapshot.tenant_id == tenant_id)
+        .where(ExecutiveKpiSnapshot.snapshot_date >= period_start)
+        .where(ExecutiveKpiSnapshot.snapshot_date <= period_end)
+        .order_by(ExecutiveKpiSnapshot.snapshot_date)
+    ).all()
+
+    # Build response
+    from backend.app.schemas.trends import ExecutiveTrendDataPoint
+
+    data_points = [
+        ExecutiveTrendDataPoint(
+            snapshot_date=snap.snapshot_date,
+            revenue_amount=snap.revenue_amount,
+            ad_spend_amount=snap.ad_spend_amount,
+            blended_roas=snap.blended_roas,
+            contribution_margin_pct=snap.contribution_margin_pct,
+        )
+        for snap in snapshots
+    ]
+
+    return ExecutiveTrendResponse(
+        data_points=data_points,
+        period_start=period_start,
+        period_end=period_end,
+        window_label=date_utils.get_window_label(
+            params.window or date_utils.DateWindow.NINETY_DAYS
+        ),
+    )
+
+
+@app.get(
+    "/tenants/{tenant_id}/growth/trend",
+    response_model=GrowthTrendResponse,
+)
+def get_growth_trend(
+    tenant_id: UUID,
+    auth: GrowthViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    window: date_utils.DateWindow | None = Query(  # noqa: B008
+        date_utils.DateWindow.NINETY_DAYS,
+        description="Preset date window",
+    ),
+    start_date: date | None = Query(None),  # noqa: B008
+    end_date: date | None = Query(None),  # noqa: B008
+) -> GrowthTrendResponse:
+    """Get growth channel trends (time-series) for a tenant.
+
+    Returns time-series data points from AcquisitionMetricsSnapshot
+    grouped by channel for the specified date range.
+
+    Args:
+        tenant_id: Tenant UUID
+        auth: Authenticated user with growth.view permission
+        db: Database session
+        window: Preset date window (default: 90d)
+        start_date: Custom start date (required if window=custom)
+        end_date: Custom end date (required if window=custom)
+
+    Returns:
+        GrowthTrendResponse with per-channel time-series data
+
+    Raises:
+        HTTPException: 404 if tenant not found, 400 if invalid date range
+    """
+    # Verify tenant access
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Validate permission tenant matches requested tenant
+    membership = db.scalar(
+        select(TenantMembership)
+        .join(User)
+        .where(User.email == auth.email)
+        .where(TenantMembership.tenant_id == tenant_id)
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Access denied to this tenant")
+
+    # Parse date range
+    params = date_utils.DateRangeParams(
+        window=window, start_date=start_date, end_date=end_date
+    )
+    period_start, period_end = date_utils.calculate_date_range(params)
+
+    # Query snapshots within date range
+    snapshots = db.scalars(
+        select(AcquisitionMetricsSnapshot)
+        .where(AcquisitionMetricsSnapshot.tenant_id == tenant_id)
+        .where(AcquisitionMetricsSnapshot.snapshot_date >= period_start)
+        .where(AcquisitionMetricsSnapshot.snapshot_date <= period_end)
+        .order_by(
+            AcquisitionMetricsSnapshot.channel,
+            AcquisitionMetricsSnapshot.snapshot_date,
+        )
+    ).all()
+
+    # Group by channel
+    from collections import defaultdict
+
+    from backend.app.schemas.trends import (
+        GrowthChannelTrendDataPoint,
+        GrowthChannelTrendResponse,
+    )
+
+    channel_data: dict[str, list[GrowthChannelTrendDataPoint]] = defaultdict(list)
+    for snap in snapshots:
+        channel_data[snap.channel].append(
+            GrowthChannelTrendDataPoint(
+                snapshot_date=snap.snapshot_date,
+                ad_spend_amount=snap.ad_spend_amount,
+                revenue_attributed=snap.revenue_attributed,
+                order_count=snap.order_count,
+                roas=snap.roas,
+                cac=snap.cac,
+                contribution_margin_pct=snap.contribution_margin_pct,
+                payback_period_days=snap.payback_period_days,
+            )
+        )
+
+    # Build channel responses
+    window_label = date_utils.get_window_label(
+        params.window or date_utils.DateWindow.NINETY_DAYS
+    )
+    channels = [
+        GrowthChannelTrendResponse(
+            channel=channel,
+            data_points=points,
+            period_start=period_start,
+            period_end=period_end,
+            window_label=window_label,
+        )
+        for channel, points in sorted(channel_data.items())
+    ]
+
+    return GrowthTrendResponse(
+        channels=channels,
+        period_start=period_start,
+        period_end=period_end,
+        window_label=window_label,
+    )
+
+
+@app.get(
+    "/tenants/{tenant_id}/retention/trend",
+    response_model=RetentionTrendResponse,
+)
+def get_retention_trend(
+    tenant_id: UUID,
+    auth: RetentionViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    window: date_utils.DateWindow | None = Query(  # noqa: B008
+        date_utils.DateWindow.NINETY_DAYS,
+        description="Preset date window",
+    ),
+    start_date: date | None = Query(None),  # noqa: B008
+    end_date: date | None = Query(None),  # noqa: B008
+) -> RetentionTrendResponse:
+    """Get retention metrics trend (time-series) for a tenant.
+
+    Returns time-series data points from RetentionDailySnapshot for the
+    specified date range.
+
+    Args:
+        tenant_id: Tenant UUID
+        auth: Authenticated user with retention.view permission
+        db: Database session
+        window: Preset date window (default: 90d)
+        start_date: Custom start date (required if window=custom)
+        end_date: Custom end date (required if window=custom)
+
+    Returns:
+        RetentionTrendResponse with time-series data points
+
+    Raises:
+        HTTPException: 404 if tenant not found, 400 if invalid date range
+    """
+    # Verify tenant access
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Validate permission tenant matches requested tenant
+    membership = db.scalar(
+        select(TenantMembership)
+        .join(User)
+        .where(User.email == auth.email)
+        .where(TenantMembership.tenant_id == tenant_id)
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Access denied to this tenant")
+
+    # Parse date range
+    params = date_utils.DateRangeParams(
+        window=window, start_date=start_date, end_date=end_date
+    )
+    period_start, period_end = date_utils.calculate_date_range(params)
+
+    # Query snapshots within date range
+    snapshots = db.scalars(
+        select(RetentionDailySnapshot)
+        .where(RetentionDailySnapshot.tenant_id == tenant_id)
+        .where(RetentionDailySnapshot.snapshot_date >= period_start)
+        .where(RetentionDailySnapshot.snapshot_date <= period_end)
+        .order_by(RetentionDailySnapshot.snapshot_date)
+    ).all()
+
+    # Build response
+    from backend.app.schemas.trends import RetentionTrendDataPoint
+
+    data_points = [
+        RetentionTrendDataPoint(
+            snapshot_date=snap.snapshot_date,
+            total_customers=snap.total_customers,
+            repeat_customers=snap.repeat_customers,
+            repeat_purchase_rate_pct=snap.repeat_purchase_rate_pct,
+        )
+        for snap in snapshots
+    ]
+
+    return RetentionTrendResponse(
+        data_points=data_points,
+        period_start=period_start,
+        period_end=period_end,
+        window_label=date_utils.get_window_label(
+            params.window or date_utils.DateWindow.NINETY_DAYS
+        ),
+    )
+
+
+@app.get(
+    "/tenants/{tenant_id}/finance/cost-drivers/trend",
+    response_model=CostDriverTrendResponse,
+)
+def get_cost_driver_trend(
+    tenant_id: UUID,
+    auth: FinanceViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    window: date_utils.DateWindow | None = Query(  # noqa: B008
+        date_utils.DateWindow.NINETY_DAYS,
+        description="Preset date window",
+    ),
+    start_date: date | None = Query(None),  # noqa: B008
+    end_date: date | None = Query(None),  # noqa: B008
+) -> CostDriverTrendResponse:
+    """Get cost driver trend (time-series) for a tenant.
+
+    Returns time-series data points from CostDriverSnapshot for the
+    specified date range.
+
+    Args:
+        tenant_id: Tenant UUID
+        auth: Authenticated user with finance.view permission
+        db: Database session
+        window: Preset date window (default: 90d)
+        start_date: Custom start date (required if window=custom)
+        end_date: Custom end date (required if window=custom)
+
+    Returns:
+        CostDriverTrendResponse with time-series data points
+
+    Raises:
+        HTTPException: 404 if tenant not found, 400 if invalid date range
+    """
+    # Verify tenant access
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Validate permission tenant matches requested tenant
+    membership = db.scalar(
+        select(TenantMembership)
+        .join(User)
+        .where(User.email == auth.email)
+        .where(TenantMembership.tenant_id == tenant_id)
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Access denied to this tenant")
+
+    # Parse date range
+    params = date_utils.DateRangeParams(
+        window=window, start_date=start_date, end_date=end_date
+    )
+    period_start, period_end = date_utils.calculate_date_range(params)
+
+    # Query snapshots within date range
+    snapshots = db.scalars(
+        select(CostDriverSnapshot)
+        .where(CostDriverSnapshot.tenant_id == tenant_id)
+        .where(CostDriverSnapshot.snapshot_date >= period_start)
+        .where(CostDriverSnapshot.snapshot_date <= period_end)
+        .order_by(CostDriverSnapshot.snapshot_date)
+    ).all()
+
+    # Build response (one row per driver_type per snapshot_date)
+    from backend.app.schemas.trends import CostDriverTrendDataPoint
+
+    data_points = [
+        CostDriverTrendDataPoint(
+            snapshot_date=snap.snapshot_date,
+            driver_type=snap.driver_type,
+            absolute_amount=snap.absolute_amount,
+            pct_of_revenue=snap.pct_of_revenue,
+            margin_impact_amount=snap.margin_impact_amount,
+        )
+        for snap in snapshots
+    ]
+
+    return CostDriverTrendResponse(
+        data_points=data_points,
+        period_start=period_start,
+        period_end=period_end,
+        window_label=date_utils.get_window_label(
+            params.window or date_utils.DateWindow.NINETY_DAYS
+        ),
+    )
+
+
+@app.get(
+    "/tenants/{tenant_id}/finance/margin-drift/trend",
+    response_model=MarginDriftTrendResponse,
+)
+def get_margin_drift_trend(
+    tenant_id: UUID,
+    auth: FinanceViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    window: date_utils.DateWindow | None = Query(  # noqa: B008
+        date_utils.DateWindow.NINETY_DAYS,
+        description="Preset date window",
+    ),
+    start_date: date | None = Query(None),  # noqa: B008
+    end_date: date | None = Query(None),  # noqa: B008
+) -> MarginDriftTrendResponse:
+    """Get margin drift trend (time-series) for a tenant.
+
+    Returns time-series data points from MarginDriftSnapshot for the
+    specified date range.
+
+    Args:
+        tenant_id: Tenant UUID
+        auth: Authenticated user with finance.view permission
+        db: Database session
+        window: Preset date window (default: 90d)
+        start_date: Custom start date (required if window=custom)
+        end_date: Custom end date (required if window=custom)
+
+    Returns:
+        MarginDriftTrendResponse with time-series data points
+
+    Raises:
+        HTTPException: 404 if tenant not found, 400 if invalid date range
+    """
+    # Verify tenant access
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Validate permission tenant matches requested tenant
+    membership = db.scalar(
+        select(TenantMembership)
+        .join(User)
+        .where(User.email == auth.email)
+        .where(TenantMembership.tenant_id == tenant_id)
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Access denied to this tenant")
+
+    # Parse date range
+    params = date_utils.DateRangeParams(
+        window=window, start_date=start_date, end_date=end_date
+    )
+    period_start, period_end = date_utils.calculate_date_range(params)
+
+    # Query snapshots within date range
+    snapshots = db.scalars(
+        select(MarginDriftSnapshot)
+        .where(MarginDriftSnapshot.tenant_id == tenant_id)
+        .where(MarginDriftSnapshot.snapshot_date >= period_start)
+        .where(MarginDriftSnapshot.snapshot_date <= period_end)
+        .order_by(MarginDriftSnapshot.snapshot_date)
+    ).all()
+
+    # Build response (one row per channel × category per snapshot_date)
+    from backend.app.schemas.trends import MarginDriftTrendDataPoint
+
+    data_points = [
+        MarginDriftTrendDataPoint(
+            snapshot_date=snap.snapshot_date,
+            channel=snap.channel,
+            category=snap.category,
+            actual_margin_pct=snap.actual_margin_pct,
+            expected_margin_pct=snap.expected_margin_pct,
+            drift_pct=snap.drift_pct,
+        )
+        for snap in snapshots
+    ]
+
+    return MarginDriftTrendResponse(
+        data_points=data_points,
+        period_start=period_start,
+        period_end=period_end,
+        window_label=date_utils.get_window_label(
+            params.window or date_utils.DateWindow.NINETY_DAYS
+        ),
+    )
+
+
+@app.get(
+    "/tenants/{tenant_id}/operations/inventory-risk/trend",
+    response_model=InventoryRiskTrendResponse,
+)
+def get_inventory_risk_trend(
+    tenant_id: UUID,
+    auth: OperationsViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    window: date_utils.DateWindow | None = Query(  # noqa: B008
+        date_utils.DateWindow.NINETY_DAYS,
+        description="Preset date window",
+    ),
+    start_date: date | None = Query(None),  # noqa: B008
+    end_date: date | None = Query(None),  # noqa: B008
+) -> InventoryRiskTrendResponse:
+    """Get inventory risk trend (time-series) for a tenant.
+
+    Returns time-series data points from InventoryRiskSnapshot for the
+    specified date range.
+
+    Args:
+        tenant_id: Tenant UUID
+        auth: Authenticated user with operations.view permission
+        db: Database session
+        window: Preset date window (default: 90d)
+        start_date: Custom start date (required if window=custom)
+        end_date: Custom end date (required if window=custom)
+
+    Returns:
+        InventoryRiskTrendResponse with time-series data points
+
+    Raises:
+        HTTPException: 404 if tenant not found, 400 if invalid date range
+    """
+    # Verify tenant access
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Validate permission tenant matches requested tenant
+    membership = db.scalar(
+        select(TenantMembership)
+        .join(User)
+        .where(User.email == auth.email)
+        .where(TenantMembership.tenant_id == tenant_id)
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Access denied to this tenant")
+
+    # Parse date range
+    params = date_utils.DateRangeParams(
+        window=window, start_date=start_date, end_date=end_date
+    )
+    period_start, period_end = date_utils.calculate_date_range(params)
+
+    # Query snapshots within date range
+    snapshots = db.scalars(
+        select(InventoryRiskSnapshot)
+        .where(InventoryRiskSnapshot.tenant_id == tenant_id)
+        .where(InventoryRiskSnapshot.snapshot_date >= period_start)
+        .where(InventoryRiskSnapshot.snapshot_date <= period_end)
+        .order_by(InventoryRiskSnapshot.snapshot_date)
+    ).all()
+
+    # Build response - aggregate per-SKU snapshots by date
+    from collections import defaultdict
+
+    from backend.app.schemas.trends import InventoryRiskTrendDataPoint
+
+    # Group by snapshot_date and aggregate
+    date_aggregates: dict[date, dict[str, float | int]] = defaultdict(
+        lambda: {
+            "total_skus": 0,
+            "stockout_risk_skus": 0,
+            "overstock_skus": 0,
+            "total_capital_at_risk": 0.0,
+        }
+    )
+
+    for snap in snapshots:
+        agg = date_aggregates[snap.snapshot_date]
+        agg["total_skus"] += 1
+        if snap.status in ("stockout_risk", "low_stock"):
+            agg["stockout_risk_skus"] += 1
+        if snap.status == "overstock":
+            agg["overstock_skus"] += 1
+        if snap.capital_at_risk:
+            agg["total_capital_at_risk"] += snap.capital_at_risk
+
+    # Build data points
+    data_points = [
+        InventoryRiskTrendDataPoint(
+            snapshot_date=snap_date,
+            total_skus=int(agg["total_skus"]),
+            stockout_risk_skus=int(agg["stockout_risk_skus"]),
+            overstock_skus=int(agg["overstock_skus"]),
+            total_capital_at_risk=float(agg["total_capital_at_risk"]),
+        )
+        for snap_date, agg in sorted(date_aggregates.items())
+    ]
+
+    return InventoryRiskTrendResponse(
+        data_points=data_points,
+        period_start=period_start,
+        period_end=period_end,
+        window_label=date_utils.get_window_label(
+            params.window or date_utils.DateWindow.NINETY_DAYS
+        ),
+    )
+
+
+@app.get(
+    "/tenants/{tenant_id}/operations/operational-impact/trend",
+    response_model=OperationalImpactTrendResponse,
+)
+def get_operational_impact_trend(
+    tenant_id: UUID,
+    auth: OperationsViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    window: date_utils.DateWindow | None = Query(  # noqa: B008
+        date_utils.DateWindow.NINETY_DAYS,
+        description="Preset date window",
+    ),
+    start_date: date | None = Query(None),  # noqa: B008
+    end_date: date | None = Query(None),  # noqa: B008
+) -> OperationalImpactTrendResponse:
+    """Get operational impact trend (time-series) for a tenant.
+
+    Returns time-series data points from OperationalImpactSnapshot for the
+    specified date range.
+
+    Args:
+        tenant_id: Tenant UUID
+        auth: Authenticated user with operations.view permission
+        db: Database session
+        window: Preset date window (default: 90d)
+        start_date: Custom start date (required if window=custom)
+        end_date: Custom end date (required if window=custom)
+
+    Returns:
+        OperationalImpactTrendResponse with time-series data points
+
+    Raises:
+        HTTPException: 404 if tenant not found, 400 if invalid date range
+    """
+    # Verify tenant access
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Validate permission tenant matches requested tenant
+    membership = db.scalar(
+        select(TenantMembership)
+        .join(User)
+        .where(User.email == auth.email)
+        .where(TenantMembership.tenant_id == tenant_id)
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Access denied to this tenant")
+
+    # Parse date range
+    params = date_utils.DateRangeParams(
+        window=window, start_date=start_date, end_date=end_date
+    )
+    period_start, period_end = date_utils.calculate_date_range(params)
+
+    # Query snapshots within date range
+    snapshots = db.scalars(
+        select(OperationalImpactSnapshot)
+        .where(OperationalImpactSnapshot.tenant_id == tenant_id)
+        .where(OperationalImpactSnapshot.snapshot_date >= period_start)
+        .where(OperationalImpactSnapshot.snapshot_date <= period_end)
+        .order_by(OperationalImpactSnapshot.snapshot_date)
+    ).all()
+
+    # Build response - aggregate per-SKU snapshots by date
+    from collections import defaultdict
+
+    from backend.app.schemas.trends import OperationalImpactTrendDataPoint
+
+    # Group by snapshot_date and aggregate
+    date_aggregates: dict[date, dict[str, float | int]] = defaultdict(
+        lambda: {
+            "total_skus": 0,
+            "total_margin_impact": 0.0,
+            "margin_impact_count": 0,
+            "total_lost_revenue": 0.0,
+        }
+    )
+
+    for snap in snapshots:
+        agg = date_aggregates[snap.snapshot_date]
+        agg["total_skus"] += 1
+        if snap.logistics_margin_impact_pct is not None:
+            agg["total_margin_impact"] += snap.logistics_margin_impact_pct
+            agg["margin_impact_count"] += 1
+        if snap.stockout_lost_revenue_estimate:
+            agg["total_lost_revenue"] += snap.stockout_lost_revenue_estimate
+
+    # Build data points
+    data_points = [
+        OperationalImpactTrendDataPoint(
+            snapshot_date=snap_date,
+            total_skus=int(agg["total_skus"]),
+            avg_logistics_margin_impact_pct=(
+                float(agg["total_margin_impact"])
+                / agg["margin_impact_count"]
+                if agg["margin_impact_count"] > 0
+                else 0.0
+            ),
+            total_stockout_lost_revenue=float(agg["total_lost_revenue"]),
+        )
+        for snap_date, agg in sorted(date_aggregates.items())
+    ]
+
+    return OperationalImpactTrendResponse(
+        data_points=data_points,
+        period_start=period_start,
+        period_end=period_end,
+        window_label=date_utils.get_window_label(
+            params.window or date_utils.DateWindow.NINETY_DAYS
+        ),
+    )
+
+
+@app.get("/roles", response_model=RoleListResponse)
+def get_roles(
+    auth: AuthDep,
+    tenant_id: UUID = Query(...),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> RoleListResponse:
+    """Get all roles for a tenant (system and custom)."""
+    # Get tenant
+    tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    if tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found.",
+        )
+    
+    # Get all roles for this tenant
+    roles = db.scalars(
+        select(Role)
+        .where(Role.tenant_id == tenant_id)
+        .order_by(Role.is_system.desc(), Role.name)
+    ).all()
+    
+    role_responses = [
+        RoleResponse(
+            id=role.id,
+            tenant_id=role.tenant_id,
+            name=role.name,
+            permissions=role.permissions,
+            is_system=role.is_system,
+            created_at=role.created_at,
+            updated_at=role.updated_at,
+        )
+        for role in roles
+    ]
+    
+    return RoleListResponse(roles=role_responses)
+
+
+@app.post("/roles", response_model=RoleResponse, status_code=status.HTTP_201_CREATED)
+def create_role(
+    request: RoleCreateRequest,
+    auth: AuthDep,
+    tenant_id: UUID = Query(...),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> RoleResponse:
+    """Create a custom role for a tenant."""
+    # Get tenant
+    tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    if tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found.",
+        )
+    
+    # Check if role name already exists for this tenant
+    existing_role = db.scalar(
+        select(Role)
+        .where(Role.tenant_id == tenant_id)
+        .where(Role.name == request.name)
+    )
+    if existing_role is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Role '{request.name}' already exists for this tenant.",
+        )
+    
+    # Validate permissions
+    invalid_permissions = [
+        p for p in request.permissions if p not in perm.ALL_PERMISSIONS
+    ]
+    if invalid_permissions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid permissions: {', '.join(invalid_permissions)}",
+        )
+    
+    # Create role
+    role = Role(
+        tenant_id=tenant_id,
+        name=request.name,
+        permissions=request.permissions,
+        is_system=False,
+    )
+    db.add(role)
+    db.commit()
+    db.refresh(role)
+    
+    # Audit event
+    actor = db.scalar(select(User).where(User.email == auth.email))
+    write_audit_event(
+        db=db,
+        tenant_id=tenant_id,
+        actor_user_id=actor.id if actor else None,
+        action="role.create",
+        entity_type="role",
+        entity_id=str(role.id),
+        details={"name": role.name, "permissions": role.permissions},
+    )
+    
+    return RoleResponse(
+        id=role.id,
+        tenant_id=role.tenant_id,
+        name=role.name,
+        permissions=role.permissions,
+        is_system=role.is_system,
+        created_at=role.created_at,
+        updated_at=role.updated_at,
+    )
+
+
+@app.get("/roles/{role_id}", response_model=RoleResponse)
+def get_role(
+    role_id: UUID,
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> RoleResponse:
+    """Get role details by ID."""
+    role = db.scalar(select(Role).where(Role.id == role_id))
+    if role is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Role not found.",
+        )
+    
+    return RoleResponse(
+        id=role.id,
+        tenant_id=role.tenant_id,
+        name=role.name,
+        permissions=role.permissions,
+        is_system=role.is_system,
+        created_at=role.created_at,
+        updated_at=role.updated_at,
+    )
+
+
+@app.put("/roles/{role_id}", response_model=RoleResponse)
+def update_role(
+    role_id: UUID,
+    request: RoleUpdateRequest,
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> RoleResponse:
+    """Update a custom role (system roles cannot be modified)."""
+    role = db.scalar(select(Role).where(Role.id == role_id))
+    if role is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Role not found.",
+        )
+    
+    if role.is_system:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="System roles cannot be modified.",
+        )
+    
+    # Update name if provided
+    if request.name is not None:
+        # Check if new name conflicts with existing role
+        existing_role = db.scalar(
+            select(Role)
+            .where(Role.tenant_id == role.tenant_id)
+            .where(Role.name == request.name)
+            .where(Role.id != role_id)
+        )
+        if existing_role is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Role '{request.name}' already exists for this tenant.",
+            )
+        role.name = request.name
+    
+    # Update permissions if provided
+    if request.permissions is not None:
+        # Validate permissions
+        invalid_permissions = [
+            p for p in request.permissions if p not in perm.ALL_PERMISSIONS
+        ]
+        if invalid_permissions:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid permissions: {', '.join(invalid_permissions)}",
+            )
+        role.permissions = request.permissions
+    
+    role.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(role)
+    
+    # Audit event
+    actor = db.scalar(select(User).where(User.email == auth.email))
+    write_audit_event(
+        db=db,
+        tenant_id=role.tenant_id,
+        actor_user_id=actor.id if actor else None,
+        action="role.update",
+        entity_type="role",
+        entity_id=str(role.id),
+        details={"name": role.name, "permissions": role.permissions},
+    )
+    
+    return RoleResponse(
+        id=role.id,
+        tenant_id=role.tenant_id,
+        name=role.name,
+        permissions=role.permissions,
+        is_system=role.is_system,
+        created_at=role.created_at,
+        updated_at=role.updated_at,
+    )
+
+
+@app.delete("/roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_role(
+    role_id: UUID,
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> None:
+    """Delete a custom role (system roles cannot be deleted)."""
+    role = db.scalar(select(Role).where(Role.id == role_id))
+    if role is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Role not found.",
+        )
+    
+    if role.is_system:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="System roles cannot be deleted.",
+        )
+    
+    # Check if any memberships are using this role
+    membership_count = db.scalar(
+        select(func.count(TenantMembership.id))
+        .where(TenantMembership.role_id == role_id)
+    )
+    if membership_count and membership_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot delete role. It is assigned to {membership_count} "
+                f"member(s). Please reassign them first."
+            ),
+        )
+    
+    # Audit event
+    actor = db.scalar(select(User).where(User.email == auth.email))
+    write_audit_event(
+        db=db,
+        tenant_id=role.tenant_id,
+        actor_user_id=actor.id if actor else None,
+        action="role.delete",
+        entity_type="role",
+        entity_id=str(role.id),
+        details={"name": role.name},
+    )
+    
+    db.delete(role)
+    db.commit()
+
 

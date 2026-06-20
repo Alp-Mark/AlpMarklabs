@@ -17,6 +17,9 @@ from backend.app.db.models import (
     CostInputVersion,
     InventoryRiskThreshold,
     MarginDriftThreshold,
+    Role,
+    TenantMembership,
+    User,
     UserInvitation,
 )
 from backend.app.db.session import get_db
@@ -97,7 +100,38 @@ def _create_tenant_as_super_admin(
         json={"name": tenant_name, "slug": tenant_slug},
     )
     assert response.status_code == 201
-    return response.json()["id"]
+    tenant_id = response.json()["id"]
+    
+    # Upgrade to operations_inventory_manager (has all permissions)
+    db_gen = main_module.app.dependency_overrides[get_db]()
+    db = next(db_gen)
+    try:
+        # Get the operations_inventory_manager role for this tenant
+        ops_role = db.scalar(
+            select(Role).where(
+                Role.tenant_id == uuid.UUID(tenant_id),
+                Role.name == "operations_inventory_manager",
+                Role.is_system,
+            )
+        )
+        
+        # Update the membership to use operations_inventory_manager role
+        membership = db.scalar(
+            select(TenantMembership)
+            .join(User, TenantMembership.user_id == User.id)
+            .where(
+                TenantMembership.tenant_id == uuid.UUID(tenant_id),
+                User.email == email,
+            )
+        )
+        if membership and ops_role:
+            membership.role = "operations_inventory_manager"
+            membership.role_id = ops_role.id
+            db.commit()
+    finally:
+        db.close()
+    
+    return tenant_id
 
 
 def test_health_route_returns_ok(client: TestClient) -> None:
@@ -314,7 +348,11 @@ def test_tenant_admin_endpoints_reject_non_admin_member(client: TestClient) -> N
 
     activation = client.post(
         "/accounts/activate",
-        json={"token": viewer_invite.json()["token"], "full_name": "Viewer User"},
+        json={
+            "token": viewer_invite.json()["token"],
+            "full_name": "Viewer User",
+            "password": "testpass123",
+        },
     )
     assert activation.status_code == 200
 
@@ -409,7 +447,7 @@ def test_invite_then_activate_flow_works(client: TestClient) -> None:
 
     activation_response = client.post(
         "/accounts/activate",
-        json={"token": token, "full_name": "Invited User"},
+        json={"token": token, "full_name": "Invited User", "password": "testpass123"},
     )
 
     assert activation_response.status_code == 200
@@ -443,7 +481,7 @@ def _create_active_member(
 
     activation_response = client.post(
         "/accounts/activate",
-        json={"token": token, "full_name": full_name},
+        json={"token": token, "full_name": full_name, "password": "testpass123"},
     )
     assert activation_response.status_code == 200
 
@@ -624,7 +662,11 @@ def test_update_seat_limit_cannot_go_below_active_members(client: TestClient) ->
     second_token = second_member.json()["token"]
     activate_second = client.post(
         "/accounts/activate",
-        json={"token": second_token, "full_name": "Seat Member 2"},
+        json={
+            "token": second_token,
+            "full_name": "Seat Member 2",
+            "password": "testpass123",
+        },
     )
     assert activate_second.status_code == 200
 
@@ -803,7 +845,7 @@ def test_audit_events_written_for_mutations(client: TestClient) -> None:
 
     activation_response = client.post(
         "/accounts/activate",
-        json={"token": token, "full_name": "Audit User"},
+        json={"token": token, "full_name": "Audit User", "password": "testpass123"},
     )
     assert activation_response.status_code == 200
     user_id = activation_response.json()["user_id"]
@@ -918,7 +960,11 @@ def test_account_activation_flow_success(client: TestClient) -> None:
 
     activation_response = client.post(
         "/accounts/activate",
-        json={"token": "activate-token-1", "full_name": "Sudeep Pemmaraju"},
+        json={
+            "token": "activate-token-1",
+            "full_name": "Sudeep Pemmaraju",
+            "password": "testpass123",
+        },
     )
 
     assert activation_response.status_code == 200
@@ -933,7 +979,11 @@ def test_account_activation_flow_success(client: TestClient) -> None:
 def test_account_activation_token_not_found(client: TestClient) -> None:
     response = client.post(
         "/accounts/activate",
-        json={"token": "missing-token", "full_name": "Sudeep Pemmaraju"},
+        json={
+            "token": "missing-token",
+            "full_name": "Sudeep Pemmaraju",
+            "password": "testpass123",
+        },
     )
 
     assert response.status_code == 404
@@ -949,11 +999,19 @@ def test_account_activation_token_cannot_be_reused(client: TestClient) -> None:
 
     first_response = client.post(
         "/accounts/activate",
-        json={"token": "activate-token-2", "full_name": "Sudeep Pemmaraju"},
+        json={
+            "token": "activate-token-2",
+            "full_name": "Sudeep Pemmaraju",
+            "password": "testpass123",
+        },
     )
     second_response = client.post(
         "/accounts/activate",
-        json={"token": "activate-token-2", "full_name": "Sudeep Pemmaraju"},
+        json={
+            "token": "activate-token-2",
+            "full_name": "Sudeep Pemmaraju",
+            "password": "testpass123",
+        },
     )
 
     assert first_response.status_code == 200
@@ -1012,7 +1070,11 @@ def test_onboarding_checklist_updates_after_invite_and_activation(
 
     activation_response = client.post(
         "/accounts/activate",
-        json={"token": "activate-token-3", "full_name": "Delta User"},
+        json={
+            "token": "activate-token-3",
+            "full_name": "Delta User",
+            "password": "testpass123",
+        },
     )
     assert activation_response.status_code == 200
 

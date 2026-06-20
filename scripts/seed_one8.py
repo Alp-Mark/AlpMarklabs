@@ -75,8 +75,11 @@ TENANT_SLUG = "one8"
 OWNER_EMAIL = "owner@one8.com"
 OWNER_NAME = "one8 Owner"
 
-# brand_admin satisfies every dashboard endpoint's role requirement.
-OWNER_ROLE = "brand_admin"
+# Phase F: Executive Owner role so the owner sees all dashboard sections.
+OWNER_ROLE = "executive_owner"
+
+# Historical data window: Generate this many days of history (90-365).
+HISTORY_DAYS = 90
 
 # Demo currency. one8 is an Indian brand, so the demo uses Indian Rupees with
 # the en-IN locale. ``_USD_TO_INR`` scales the hand-authored USD figures into
@@ -283,10 +286,15 @@ for _p in PRODUCTS:
 # --------------------------------------------------------------------------- #
 # Builders
 # --------------------------------------------------------------------------- #
-def build_cost_drivers(today: date, now: datetime) -> list[CostDriverSnapshot]:
-    """Five Phase-1 cost drivers for the latest snapshot date."""
-    period_start = today - timedelta(days=29)
-    updated = now - timedelta(hours=2)
+def build_cost_drivers(
+    snapshot_date: date, now: datetime, day_offset: int = 0
+) -> list[CostDriverSnapshot]:
+    """Five Phase-1 cost drivers for a given snapshot date.
+    
+    day_offset varies the data slightly across days to simulate realistic drift.
+    """
+    period_start = snapshot_date - timedelta(days=29)
+    updated = now - timedelta(hours=2, days=day_offset)
     # (driver_type, pct_of_revenue, source, source_platform)
     rows = [
         ("cogs", 42.0, "estimated", "shopify"),
@@ -297,14 +305,16 @@ def build_cost_drivers(today: date, now: datetime) -> list[CostDriverSnapshot]:
     ]
     drivers: list[CostDriverSnapshot] = []
     for driver_type, pct, source, platform in rows:
-        amount = round(MONTHLY_REVENUE * pct / 100.0, 2)
+        # Add small daily variance (±2%) to simulate realistic drift
+        variance = 1.0 + (day_offset % 7 - 3) * 0.005
+        amount = round(MONTHLY_REVENUE * pct / 100.0 * variance, 2)
         drivers.append(
             CostDriverSnapshot(
                 tenant_id=TENANT_ID,
                 driver_type=driver_type,
-                snapshot_date=today,
+                snapshot_date=snapshot_date,
                 period_start_date=period_start,
-                period_end_date=today,
+                period_end_date=snapshot_date,
                 absolute_amount=amount,
                 revenue=MONTHLY_REVENUE,
                 pct_of_revenue=pct,
@@ -319,8 +329,13 @@ def build_cost_drivers(today: date, now: datetime) -> list[CostDriverSnapshot]:
     return drivers
 
 
-def build_margin_drift(today: date) -> list[MarginDriftSnapshot]:
-    """Channel x category margin drift for the latest snapshot date."""
+def build_margin_drift(
+    snapshot_date: date, day_offset: int = 0
+) -> list[MarginDriftSnapshot]:
+    """Channel x category margin drift for a given snapshot date.
+    
+    day_offset varies margins slightly to show historical trends.
+    """
     # (channel, category, actual, expected, exceeded, reason)
     rows = [
         ("shopify", "Running", 38.5, 44.0, True, "Discount depth increased"),
@@ -329,17 +344,21 @@ def build_margin_drift(today: date) -> list[MarginDriftSnapshot]:
         ("shopify", "Formal", 47.0, 46.0, False, "Within normal range"),
     ]
     snapshots: list[MarginDriftSnapshot] = []
-    for channel, category, actual, expected, exceeded, reason in rows:
+    for channel, category, actual, expected, _exceeded, reason in rows:
+        # Add small daily margin variance (±1pt)
+        variance = (day_offset % 5 - 2) * 0.3
+        actual_adjusted = round(actual + variance, 2)
+        exceeded_adjusted = actual_adjusted < expected
         snapshots.append(
             MarginDriftSnapshot(
                 tenant_id=TENANT_ID,
-                snapshot_date=today,
+                snapshot_date=snapshot_date,
+                actual_margin_pct=actual_adjusted,
                 channel=channel,
                 category=category,
-                actual_margin_pct=actual,
                 expected_margin_pct=expected,
-                drift_pct=round(actual - expected, 2),
-                threshold_exceeded=exceeded,
+                drift_pct=round(actual_adjusted - expected, 2),
+                threshold_exceeded=exceeded_adjusted,
                 variance_reason=reason,
                 data_completeness="complete",
             )
@@ -347,18 +366,26 @@ def build_margin_drift(today: date) -> list[MarginDriftSnapshot]:
     return snapshots
 
 
-def build_inventory_risk(today: date) -> list[InventoryRiskSnapshot]:
-    """One inventory-risk row per catalogue SKU for the latest snapshot date."""
+def build_inventory_risk(
+    snapshot_date: date, day_offset: int = 0
+) -> list[InventoryRiskSnapshot]:
+    """One inventory-risk row per catalogue SKU for a given snapshot date.
+    
+    day_offset simulates inventory changing over time.
+    """
     snapshots: list[InventoryRiskSnapshot] = []
     for p in PRODUCTS:
+        # Simulate inventory changes: reduce by 10% over HISTORY_DAYS
+        age_factor = 1.0 - (day_offset / HISTORY_DAYS * 0.1)
+        current_qty = int(p["on_hand"] * age_factor)
         snapshots.append(
             InventoryRiskSnapshot(
                 tenant_id=TENANT_ID,
-                snapshot_date=today,
+                snapshot_date=snapshot_date,
+                current_quantity=max(current_qty, 0),
                 sku=p["sku"],
                 product_title=p["title"],
                 variant_title=p["variant"],
-                current_quantity=p["on_hand"],
                 reorder_point=p["reorder"],
                 status=p["inv_status"],
                 daily_velocity_30d=p["daily_velocity"],
@@ -375,11 +402,18 @@ def build_inventory_risk(today: date) -> list[InventoryRiskSnapshot]:
     return snapshots
 
 
-def build_operational_impact(today: date) -> list[OperationalImpactSnapshot]:
-    """One operational-impact row per catalogue SKU for the latest date."""
+def build_operational_impact(
+    snapshot_date: date, day_offset: int = 0
+) -> list[OperationalImpactSnapshot]:
+    """One operational-impact row per catalogue SKU for a given date.
+    
+    day_offset varies operational metrics to show trends.
+    """
     snapshots: list[OperationalImpactSnapshot] = []
     for p in PRODUCTS:
-        velocity = p["daily_velocity"]
+        # Add small velocity variance (±10%)
+        variance = 1.0 + (day_offset % 9 - 4) * 0.025
+        velocity = p["daily_velocity"] * variance
         unit_price = p["unit_price"]
         op_status = p["op_status"]
         units_sold = round(velocity * 30)
@@ -394,7 +428,7 @@ def build_operational_impact(today: date) -> list[OperationalImpactSnapshot]:
         snapshots.append(
             OperationalImpactSnapshot(
                 tenant_id=TENANT_ID,
-                snapshot_date=today,
+                snapshot_date=snapshot_date,
                 sku=p["sku"],
                 product_title=p["title"],
                 variant_title=p["variant"],
@@ -979,7 +1013,7 @@ def seed() -> None:
             user.is_active = True
         db.flush()  # ensure user.id is available
 
-        # 3) Membership granting brand_admin on this tenant.
+        # 3) Membership granting executive_owner on this tenant.
         membership = db.scalar(
             select(TenantMembership).where(
                 TenantMembership.tenant_id == TENANT_ID,
@@ -1000,26 +1034,47 @@ def seed() -> None:
         # 4) Replace per-tenant demo data.
         _delete_existing_demo_data(db)
 
+        # Phase F: Generate historical data across HISTORY_DAYS
+        print(f"Generating {HISTORY_DAYS} days of historical data...")
         rows: list[object] = []
-        rows += build_cost_drivers(today, now)
-        rows += build_margin_drift(today)
-        rows += build_inventory_risk(today)
-        rows += build_operational_impact(today)
+        
+        # Daily snapshots: Cost drivers, margin, inventory, operations
+        print("  - Daily snapshots (cost drivers, margin, inventory, operations)...")
+        for day_offset in range(HISTORY_DAYS):
+            snapshot_date = today - timedelta(days=HISTORY_DAYS - day_offset - 1)
+            rows += build_cost_drivers(snapshot_date, now, day_offset)
+            rows += build_margin_drift(snapshot_date, day_offset)
+            rows += build_inventory_risk(snapshot_date, day_offset)
+            rows += build_operational_impact(snapshot_date, day_offset)
+        
+        # Monthly cohorts (already support 6 months)
+        print("  - Monthly cohorts (acquisition and retention)...")
         rows += build_acquisition_cohorts(months, now)
         rows += build_cohort_snapshots(months)
+        
+        # Recommendations (spread across history, most recent 30 days)
+        print("  - Recommendations...")
         rows += build_recommendations(today, now)
+        
+        # Alert events (relative to recommendations)
+        print("  - Alert events...")
         rows += build_alert_events(now, user.id)
+        
+        # Simulations (recent history)
+        print("  - Simulations...")
         rows += build_simulations(now)
+        
         db.add_all(rows)
-
         db.commit()
 
-        print("Seed complete for tenant 'one8'.")
+        print("\nSeed complete for tenant 'one8'.")
         print(f"  Tenant id (VITE_PYTHON_API_TENANT): {TENANT_ID}")
         print(f"  Owner email (VITE_PYTHON_API_EMAIL): {OWNER_EMAIL}")
+        print(f"  Owner role: {OWNER_ROLE}")
         print("  Password (VITE_PYTHON_API_PASSWORD): any non-empty value")
         print(f"  Base currency: {CURRENCY} ({LOCALE})")
-        print(f"  Rows inserted: {len(rows)}")
+        print(f"  History days: {HISTORY_DAYS}")
+        print(f"  Rows inserted: {len(rows):,}")
     except Exception:
         db.rollback()
         raise

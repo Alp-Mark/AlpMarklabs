@@ -631,13 +631,25 @@ class TestTenantIsolation:
         # Add user to other_tenant
         from uuid import uuid4
 
-        from backend.app.db.models import TenantMembership
+        from backend.app.db.models import Role, TenantMembership
+        from sqlalchemy import select
+        
+        # Get the operations_inventory_manager system role
+        role = db_session.scalar(
+            select(Role).where(
+                Role.tenant_id == other_tenant.id,
+                Role.name == "operations_inventory_manager",
+                Role.is_system == True,  # noqa: E712
+            )
+        )
+        assert role is not None, "operations_inventory_manager role must exist"
         
         membership = TenantMembership(
             id=uuid4(),
             tenant_id=other_tenant.id,
             user_id=user.id,
-            role="operations_manager",
+            role="operations_inventory_manager",
+            role_id=role.id,
         )
         db_session.add(membership)
         db_session.commit()
@@ -685,13 +697,25 @@ class TestTenantIsolation:
         # Add user to other_tenant
         from uuid import uuid4
 
-        from backend.app.db.models import TenantMembership
+        from backend.app.db.models import Role, TenantMembership
+        from sqlalchemy import select
+        
+        # Get the operations_inventory_manager system role
+        role = db_session.scalar(
+            select(Role).where(
+                Role.tenant_id == other_tenant.id,
+                Role.name == "operations_inventory_manager",
+                Role.is_system == True,  # noqa: E712
+            )
+        )
+        assert role is not None, "operations_inventory_manager role must exist"
         
         membership = TenantMembership(
             id=uuid4(),
             tenant_id=other_tenant.id,
             user_id=user.id,
-            role="operations_manager",
+            role="operations_inventory_manager",
+            role_id=role.id,
         )
         db_session.add(membership)
         db_session.commit()

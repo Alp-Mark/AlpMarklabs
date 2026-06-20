@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from backend.app.db.models import (
+    Role,
     Tenant,
     User,
 )
@@ -395,11 +396,22 @@ class TestAlertEventHistory:
                     )
                 )
                 if existing is None:
+                    # Get the operations_inventory_manager system role
+                    role = db_session.scalar(
+                        select(Role).where(
+                            Role.tenant_id == tm_tenant.id,
+                            Role.name == "operations_inventory_manager",
+                            Role.is_system == True,  # noqa: E712
+                        )
+                    )
+                    assert role is not None, "role must exist"
+                    
                     membership = TenantMembership(
                         id=uuid4(),
-                    tenant_id=tm_tenant.id,
+                        tenant_id=tm_tenant.id,
                         user_id=tm_user.id,
-                        role="operations_manager",
+                        role="operations_inventory_manager",
+                        role_id=role.id,
                     )
                     db_session.add(membership)
         db_session.commit()

@@ -9,7 +9,7 @@ from datetime import date, timedelta
 import jwt
 import pytest
 from backend.app.db.base import Base
-from backend.app.db.models import Recommendation
+from backend.app.db.models import Recommendation, Role, TenantMembership, User
 from backend.app.db.session import get_db
 from backend.app.main import app
 from backend.app.recommendations.suppression import (
@@ -19,7 +19,7 @@ from backend.app.recommendations.suppression import (
 )
 from backend.app.security import AUTH_JWT_ALGORITHM, AUTH_JWT_SECRET
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -81,7 +81,41 @@ def _create_tenant(client: TestClient, slug: str, email: str) -> str:
         headers=_headers(email),
     )
     assert resp.status_code == 201
-    return resp.json()["id"]
+    tenant_id = resp.json()["id"]
+    
+    # Note: System roles are now seeded automatically by POST /tenants endpoint
+    # Note: TenantMembership for creator is created with brand_admin role
+    
+    # Upgrade to operations_inventory_manager (has all permissions)
+    db_gen = app.dependency_overrides[get_db]()
+    db = next(db_gen)
+    try:
+        # Get the operations_inventory_manager role for this tenant
+        ops_role = db.scalar(
+            select(Role).where(
+                Role.tenant_id == uuid.UUID(tenant_id),
+                Role.name == "operations_inventory_manager",
+                Role.is_system,
+            )
+        )
+        
+        # Update the membership to use operations_inventory_manager role
+        membership = db.scalar(
+            select(TenantMembership)
+            .join(User, TenantMembership.user_id == User.id)
+            .where(
+                TenantMembership.tenant_id == uuid.UUID(tenant_id),
+                User.email == email,
+            )
+        )
+        if membership and ops_role:
+            membership.role = "operations_inventory_manager"
+            membership.role_id = ops_role.id
+            db.commit()
+    finally:
+        db.close()
+    
+    return tenant_id
 
 
 def _seed_recommendation(

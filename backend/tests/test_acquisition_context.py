@@ -12,12 +12,15 @@ from datetime import date
 import jwt
 from backend.app.db.models import (
     AcquisitionCohort,
+    Role,
     TenantMembership,
     User,
 )
+from backend.app.db.session import get_db
 from backend.app.main import app
 from backend.app.security import AUTH_JWT_ALGORITHM, AUTH_JWT_SECRET
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 client = TestClient(app)
@@ -47,7 +50,63 @@ def _create_tenant_and_get_id(
         },
     )
     assert response.status_code == 201
-    return response.json()["id"], token
+    tenant_id = response.json()["id"]
+    
+    # Upgrade to operations_inventory_manager (has all permissions)
+    db_gen = app.dependency_overrides.get(get_db, get_db)()
+    db = next(db_gen)
+    try:
+        # Get the operations_inventory_manager role for this tenant
+        ops_role = db.scalar(
+            select(Role).where(
+                Role.tenant_id == uuid.UUID(tenant_id),
+                Role.name == "operations_inventory_manager",
+                Role.is_system,
+            )
+        )
+        
+        # Update the membership to use operations_inventory_manager role
+        membership = db.scalar(
+            select(TenantMembership)
+            .join(User, TenantMembership.user_id == User.id)
+            .where(
+                TenantMembership.tenant_id == uuid.UUID(tenant_id),
+                User.email == email,
+            )
+        )
+        if membership and ops_role:
+            membership.role = "operations_inventory_manager"
+            membership.role_id = ops_role.id
+            db.commit()
+    finally:
+        db.close()
+    
+    return tenant_id, token
+
+
+def _ensure_membership_with_role(
+    db_session: Session, user: User, tenant_id: uuid.UUID
+) -> None:
+    """Ensure user has a tenant membership with operations_inventory_manager role."""
+    membership = db_session.query(TenantMembership).filter_by(
+        user_id=user.id, tenant_id=tenant_id
+    ).first()
+    
+    if membership:
+        # Membership exists - ensure it has role_id set
+        if not membership.role_id:
+            ops_role = db_session.scalar(
+                select(Role).where(
+                    Role.tenant_id == tenant_id,
+                    Role.name == "operations_inventory_manager",
+                    Role.is_system,
+                )
+            )
+            if ops_role:
+                membership.role = "operations_inventory_manager"
+                membership.role_id = ops_role.id
+                db_session.commit()
+    # If no membership, it should have been created by create_tenant endpoint
 
 
 class TestAcquisitionContext:
@@ -61,23 +120,6 @@ class TestAcquisitionContext:
             client, "Test Brand", "test-brand"
         )
         tenant_id = uuid.UUID(tenant_id_str)
-        email = "admin-test-brand@test.local"
-        user = db_session.query(User).filter_by(email=email).first()
-        assert user is not None
-
-        # Add user to tenant with operations_manager role
-        membership = db_session.query(TenantMembership).filter_by(
-            user_id=user.id, tenant_id=tenant_id
-        ).first()
-        if membership is None:
-            membership = TenantMembership(
-                id=uuid.uuid4(),
-                user_id=user.id,
-                tenant_id=tenant_id,
-                role="operations_manager",
-            )
-            db_session.add(membership)
-            db_session.commit()
 
         response = client.get(
             f"/tenants/{tenant_id}/retention/acquisition-context?"
@@ -99,22 +141,6 @@ class TestAcquisitionContext:
             client, "Test Brand 2", "test-brand-2"
         )
         tenant_id = uuid.UUID(tenant_id_str)
-        email = "admin-test-brand-2@test.local"
-        user = db_session.query(User).filter_by(email=email).first()
-        assert user is not None
-
-        membership = db_session.query(TenantMembership).filter_by(
-            user_id=user.id, tenant_id=tenant_id
-        ).first()
-        if membership is None:
-            membership = TenantMembership(
-                id=uuid.uuid4(),
-                user_id=user.id,
-                tenant_id=tenant_id,
-                role="operations_manager",
-            )
-            db_session.add(membership)
-            db_session.commit()
 
         # Create acquisition cohorts
         cohort1 = AcquisitionCohort(
@@ -175,22 +201,6 @@ class TestAcquisitionContext:
             client, "Test Brand 3", "test-brand-3"
         )
         tenant_id = uuid.UUID(tenant_id_str)
-        email = "admin-test-brand-3@test.local"
-        user = db_session.query(User).filter_by(email=email).first()
-        assert user is not None
-
-        membership = db_session.query(TenantMembership).filter_by(
-            user_id=user.id, tenant_id=tenant_id
-        ).first()
-        if membership is None:
-            membership = TenantMembership(
-                id=uuid.uuid4(),
-                user_id=user.id,
-                tenant_id=tenant_id,
-                role="operations_manager",
-            )
-            db_session.add(membership)
-            db_session.commit()
 
         # Create multiple cohorts
         for channel in ["shopify_organic", "meta_ads", "google_ads"]:
@@ -267,27 +277,7 @@ class TestAcquisitionContext:
         tenant1_id = uuid.UUID(tenant1_id_str)
         tenant2_id = uuid.UUID(tenant2_id_str)
 
-        # Setup users for both tenants
-        email1 = "admin-tenant-1@test.local"
-        email2 = "admin-tenant-2@test.local"
-        user1 = db_session.query(User).filter_by(email=email1).first()
-        user2 = db_session.query(User).filter_by(email=email2).first()
-        assert user1 is not None
-        assert user2 is not None
-
-        for user, tenant_id in [(user1, tenant1_id), (user2, tenant2_id)]:
-            membership = db_session.query(TenantMembership).filter_by(
-                user_id=user.id, tenant_id=tenant_id
-            ).first()
-            if membership is None:
-                membership = TenantMembership(
-                    id=uuid.uuid4(),
-                    user_id=user.id,
-                    tenant_id=tenant_id,
-                    role="operations_manager",
-                )
-                db_session.add(membership)
-        db_session.commit()
+        # Setup complete - memberships created by _create_tenant_and_get_id
 
         # Create cohorts for tenant2 only
         cohort = AcquisitionCohort(
@@ -332,22 +322,6 @@ class TestAcquisitionContext:
             client, "Test Brand 4", "test-brand-4"
         )
         tenant_id = uuid.UUID(tenant_id_str)
-        email = "admin-test-brand-4@test.local"
-        user = db_session.query(User).filter_by(email=email).first()
-        assert user is not None
-
-        membership = db_session.query(TenantMembership).filter_by(
-            user_id=user.id, tenant_id=tenant_id
-        ).first()
-        if membership is None:
-            membership = TenantMembership(
-                id=uuid.uuid4(),
-                user_id=user.id,
-                tenant_id=tenant_id,
-                role="operations_manager",
-            )
-            db_session.add(membership)
-            db_session.commit()
 
         # Create cohorts for different months
         for month in [5, 6, 7]:
@@ -386,22 +360,6 @@ class TestAcquisitionContext:
             client, "Test Brand 5", "test-brand-5"
         )
         tenant_id = uuid.UUID(tenant_id_str)
-        email = "admin-test-brand-5@test.local"
-        user = db_session.query(User).filter_by(email=email).first()
-        assert user is not None
-
-        membership = db_session.query(TenantMembership).filter_by(
-            user_id=user.id, tenant_id=tenant_id
-        ).first()
-        if membership is None:
-            membership = TenantMembership(
-                id=uuid.uuid4(),
-                user_id=user.id,
-                tenant_id=tenant_id,
-                role="operations_manager",
-            )
-            db_session.add(membership)
-            db_session.commit()
 
         response = client.get(
             f"/tenants/{tenant_id}/retention/acquisition-context?"
