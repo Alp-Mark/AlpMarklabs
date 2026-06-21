@@ -55,3 +55,11 @@ class AdminTenantStatusUpdateRequest(BaseModel):
     """Request to suspend or activate a tenant."""
 
     is_active: bool
+
+
+class AdminTenantDeleteResponse(BaseModel):
+    """Response after deleting a tenant."""
+
+    message: str
+    tenant_id: UUID
+    deleted_at: datetime

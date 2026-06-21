@@ -109,6 +109,7 @@ from backend.app.schemas.account import (
     UserSessionResponse,
 )
 from backend.app.schemas.admin_tenant import (
+    AdminTenantDeleteResponse,
     AdminTenantListResponse,
     AdminTenantResponse,
     AdminTenantStatusUpdateRequest,
@@ -2726,6 +2727,53 @@ def update_tenant_status(
         updated_at=tenant.updated_at,
         total_users=total_users or 0,
         active_users=active_users or 0,
+    )
+
+
+@app.delete("/admin/tenants/{tenant_id}", response_model=AdminTenantDeleteResponse)
+def delete_tenant(
+    tenant_id: uuid.UUID,
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> AdminTenantDeleteResponse:
+    """D4: Delete tenant and all associated data (super-admin only).
+    
+    WARNING: This is a destructive operation that:
+    - Deletes the tenant record
+    - Cascades to delete all tenant memberships, data, and resources
+    - Cannot be undone
+    
+    Use with extreme caution.
+    """
+    tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found",
+        )
+
+    tenant_name = tenant.name
+    
+    # Write audit event before deletion
+    actor = db.scalar(select(User).where(User.email == _auth.email))
+    write_audit_event(
+        db,
+        tenant_id=tenant_id,
+        action="tenant.deleted",
+        entity_type="tenant",
+        entity_id=str(tenant_id),
+        details={"tenant_name": tenant_name, "deleted_by": _auth.email},
+        actor_user_id=actor.id if actor else None,
+    )
+    
+    # Delete tenant (cascade will handle related records)
+    db.delete(tenant)
+    db.commit()
+    
+    return AdminTenantDeleteResponse(
+        message=f"Tenant '{tenant_name}' and all associated data deleted successfully",
+        tenant_id=tenant_id,
+        deleted_at=datetime.now(UTC),
     )
 
 

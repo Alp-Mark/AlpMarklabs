@@ -1368,15 +1368,15 @@ const chartColors = {
 }
 ```
 
-### Domain 3: Tenants
+### Domain 3: Tenants (Super Admin Only)
 
 | Method | Path | Auth | Response | Purpose |
 |--------|------|------|----------|---------|
-| GET | `/api/tenants` | Super Admin | List of tenants | List all tenants |
-| POST | `/api/tenants` | Super Admin | Tenant object | Create tenant |
-| GET | `/api/tenants/{tenant_id}` | Super Admin | Tenant object | Get tenant details |
-| PUT | `/api/tenants/{tenant_id}` | Super Admin | Tenant object | Update tenant |
-| DELETE | `/api/tenants/{tenant_id}` | Super Admin | `{message}` | Delete tenant |
+| GET | `/admin/tenants` | Super Admin | List of tenants | List all tenants with pagination |
+| GET | `/admin/tenants/{tenant_id}` | Super Admin | Tenant object | Get tenant details |
+| PATCH | `/admin/tenants/{tenant_id}` | Super Admin | Tenant object | Update tenant |
+| PATCH | `/admin/tenants/{tenant_id}/status` | Super Admin | Tenant object | Suspend or activate tenant |
+| DELETE | `/admin/tenants/{tenant_id}` | Super Admin | `{message, tenant_id, deleted_at}` | Delete tenant and all data (⚠️ DESTRUCTIVE) |
 
 ### Domain 4: Users
 
@@ -2895,6 +2895,42 @@ export const SuperAdminDashboard: React.FC = () => {
     }
   };
 
+  const deleteTenant = async (tenantId: string, tenantName: string) => {
+    const confirmed = window.confirm(
+      `⚠️ WARNING: This will permanently delete tenant "${tenantName}" and ALL associated data.\n\n` +
+      `This includes:\n` +
+      `• All users and memberships\n` +
+      `• All business data and analytics\n` +
+      `• All integrations and configurations\n` +
+      `• All recommendations and simulations\n\n` +
+      `This action CANNOT be undone.\n\n` +
+      `Are you absolutely sure you want to delete this tenant?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    // Double confirmation for critical action
+    const doubleConfirm = window.confirm(
+      `Final confirmation: Type the tenant name to confirm deletion.\n\n` +
+      `Expected: ${tenantName}\n\n` +
+      `Click OK to proceed with deletion.`
+    );
+
+    if (!doubleConfirm) {
+      return;
+    }
+
+    try {
+      await apiClient.delete(`/admin/tenants/${tenantId}`);
+      alert(`Tenant "${tenantName}" deleted successfully.`);
+      loadTenants(); // Reload the list
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to delete tenant');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white shadow">
@@ -3006,7 +3042,13 @@ export const SuperAdminDashboard: React.FC = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <button className="text-blue-600 hover:text-blue-800 mr-3">Edit</button>
-                    <button className="text-gray-600 hover:text-gray-800">View</button>
+                    <button className="text-gray-600 hover:text-gray-800 mr-3">View</button>
+                    <button 
+                      onClick={() => deleteTenant(tenant.id, tenant.name)}
+                      className="text-red-600 hover:text-red-800 font-medium"
+                    >
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))}
