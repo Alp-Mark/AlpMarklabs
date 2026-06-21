@@ -1886,13 +1886,32 @@ def activate_account(
             TenantMembership.user_id == user.id,
         )
     )
+    
+    # Look up the role from the roles table (migration 0058)
+    role_obj = db.scalar(
+        select(Role).where(
+            Role.tenant_id == invitation.tenant_id,
+            Role.name == invitation.role,
+            Role.is_system,
+        )
+    )
+    if not role_obj:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"System role '{invitation.role}' not found for tenant.",
+        )
+    
     if membership is None:
         membership = TenantMembership(
             tenant_id=invitation.tenant_id,
             user_id=user.id,
             role=invitation.role,
+            role_id=role_obj.id,
         )
         db.add(membership)
+    else:
+        membership.role = invitation.role
+        membership.role_id = role_obj.id
 
     invitation.accepted_at = now
     write_audit_event(
