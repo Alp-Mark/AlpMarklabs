@@ -3049,15 +3049,15 @@ def delete_tenant(
         sa.delete(UserInvitation).where(UserInvitation.tenant_id == tenant_id)
     )
     
-    # Delete roles
-    db.execute(sa.delete(Role).where(Role.tenant_id == tenant_id))
-    
-    # Delete tenant memberships
+    # Delete tenant memberships (must be before roles due to FK)
     db.execute(
         sa.delete(TenantMembership).where(
             TenantMembership.tenant_id == tenant_id
         )
     )
+    
+    # Delete roles
+    db.execute(sa.delete(Role).where(Role.tenant_id == tenant_id))
     
     # Finally, delete the tenant itself
     db.delete(tenant)
