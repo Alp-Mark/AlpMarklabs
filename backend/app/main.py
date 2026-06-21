@@ -1837,7 +1837,6 @@ def invite_user(
 @app.post("/accounts/activate", response_model=AccountActivationResponse)
 def activate_account(
     payload: AccountActivationRequest,
-    _auth: AuthDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AccountActivationResponse:
     invitation = db.scalar(
