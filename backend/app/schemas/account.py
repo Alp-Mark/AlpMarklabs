@@ -22,7 +22,7 @@ class UserResponse(BaseModel):
     """Response for GET /users/me endpoint."""
 
     email: str
-    platform_role: str
+    platform_role: str | None = None
     tenant_id: str | None = None
 
 

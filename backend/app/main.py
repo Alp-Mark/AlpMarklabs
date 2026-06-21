@@ -1319,7 +1319,7 @@ def get_current_user(
     db: Session = Depends(get_db),  # noqa: B008
 ) -> UserResponse:
     """Get current authenticated user's info."""
-    # Try to get the user's tenant membership from database
+    # Look up the user's tenant membership from database
     try:
         user_id = db.scalar(select(User.id).where(User.email == auth.email))
         if user_id:
@@ -1327,18 +1327,18 @@ def get_current_user(
                 select(TenantMembership)
                 .where(TenantMembership.user_id == user_id)
                 .order_by(TenantMembership.created_at)
+                .limit(1)
             )
             tenant_id = str(membership.tenant_id) if membership else None
         else:
             tenant_id = None
     except Exception:
-        # If database lookup fails, return info from JWT token
-        # (useful for dev/demo environments)
+        # If database lookup fails, tenant_id remains None
         tenant_id = None
 
     return UserResponse(
         email=auth.email,
-        platform_role=auth.platform_role or "member",
+        platform_role=auth.platform_role,
         tenant_id=tenant_id,
     )
 
