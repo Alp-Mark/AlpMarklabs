@@ -2754,19 +2754,312 @@ def delete_tenant(
 
     tenant_name = tenant.name
     
-    # Write audit event before deletion
-    actor = db.scalar(select(User).where(User.email == _auth.email))
-    write_audit_event(
-        db,
-        tenant_id=tenant_id,
-        action="tenant.deleted",
-        entity_type="tenant",
-        entity_id=str(tenant_id),
-        details={"tenant_name": tenant_name, "deleted_by": _auth.email},
-        actor_user_id=actor.id if actor else None,
+    # Manually delete all child records that reference this tenant
+    # Order matters - delete child records before parent records
+    
+    # Delete data snapshots and analytics
+    from backend.app.db.models import (
+        AcquisitionMetricsSnapshot,
+        CohortSnapshot,
+        CostDriverSnapshot,
+        ExecutiveKpiSnapshot,
+        InventoryRiskSnapshot,
+        MarginDriftSnapshot,
+        OperationalImpactSnapshot,
+        RetentionDailySnapshot,
+        SegmentMarginSnapshot,
+    )
+    db.execute(
+        sa.delete(AcquisitionMetricsSnapshot).where(
+            AcquisitionMetricsSnapshot.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(CohortSnapshot).where(CohortSnapshot.tenant_id == tenant_id)
+    )
+    db.execute(
+        sa.delete(CostDriverSnapshot).where(
+            CostDriverSnapshot.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(ExecutiveKpiSnapshot).where(
+            ExecutiveKpiSnapshot.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(InventoryRiskSnapshot).where(
+            InventoryRiskSnapshot.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(MarginDriftSnapshot).where(
+            MarginDriftSnapshot.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(OperationalImpactSnapshot).where(
+            OperationalImpactSnapshot.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(RetentionDailySnapshot).where(
+            RetentionDailySnapshot.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(SegmentMarginSnapshot).where(
+            SegmentMarginSnapshot.tenant_id == tenant_id
+        )
     )
     
-    # Delete tenant (cascade will handle related records)
+    # Delete integration data
+    from backend.app.db.models import (
+        GoogleAdSpend,
+        MetaAdSpend,
+        ShopifyInventoryItem,
+        ShopifyOrderLineItem,
+    )
+    db.execute(
+        sa.delete(ShopifyOrderLineItem).where(
+            ShopifyOrderLineItem.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(ShopifyInventoryItem).where(
+            ShopifyInventoryItem.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(MetaAdSpend).where(MetaAdSpend.tenant_id == tenant_id)
+    )
+    db.execute(
+        sa.delete(GoogleAdSpend).where(GoogleAdSpend.tenant_id == tenant_id)
+    )
+    
+    # Delete Shopify orders (parent of line items)
+    from backend.app.db.models import ShopifyOrder
+    db.execute(
+        sa.delete(ShopifyOrder).where(ShopifyOrder.tenant_id == tenant_id)
+    )
+    
+    # Delete recommendations and simulations
+    from backend.app.db.models import RecommendationSuppressionState
+    db.execute(
+        sa.delete(RecommendationSuppressionState).where(
+            RecommendationSuppressionState.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(Recommendation).where(Recommendation.tenant_id == tenant_id)
+    )
+    # Delete scenarios via simulation FK
+    db.execute(
+        sa.delete(Scenario).where(
+            Scenario.simulation_id.in_(
+                sa.select(Simulation.id).where(
+                    Simulation.tenant_id == tenant_id
+                )
+            )
+        )
+    )
+    db.execute(sa.delete(Simulation).where(Simulation.tenant_id == tenant_id))
+    
+    # Delete alerts and notifications
+    from backend.app.db.models import (
+        AlertAcknowledgement,
+        AlertDismissal,
+        AlertEventLog,
+        AlertRecipient,
+        AlertThreshold,
+        EmailDeliveryLog,
+    )
+    db.execute(
+        sa.delete(AlertAcknowledgement).where(
+            AlertAcknowledgement.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(AlertDismissal).where(AlertDismissal.tenant_id == tenant_id)
+    )
+    db.execute(
+        sa.delete(AlertEventLog).where(AlertEventLog.tenant_id == tenant_id)
+    )
+    db.execute(
+        sa.delete(AlertRecipient).where(AlertRecipient.tenant_id == tenant_id)
+    )
+    db.execute(
+        sa.delete(AlertThreshold).where(AlertThreshold.tenant_id == tenant_id)
+    )
+    db.execute(
+        sa.delete(EmailDeliveryLog).where(
+            EmailDeliveryLog.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(Notification).where(Notification.tenant_id == tenant_id)
+    )
+    
+    # Delete user-related data
+    from backend.app.db.models import UserNotificationPreference
+    db.execute(
+        sa.delete(UserNotificationPreference).where(
+            UserNotificationPreference.tenant_id == tenant_id
+        )
+    )
+    
+    # Delete config and settings
+    from backend.app.db.models import (
+        CostInput,
+        CostInputVersion,
+        DelegationRule,
+        EscalationRule,
+        InventoryRiskThreshold,
+        MarginDriftThreshold,
+        TenantFeatureFlag,
+        TenantRuleThreshold,
+    )
+    db.execute(
+        sa.delete(CostInputVersion).where(
+            CostInputVersion.tenant_id == tenant_id
+        )
+    )
+    db.execute(sa.delete(CostInput).where(CostInput.tenant_id == tenant_id))
+    db.execute(
+        sa.delete(DelegationRule).where(DelegationRule.tenant_id == tenant_id)
+    )
+    db.execute(
+        sa.delete(EscalationRule).where(EscalationRule.tenant_id == tenant_id)
+    )
+    db.execute(
+        sa.delete(InventoryRiskThreshold).where(
+            InventoryRiskThreshold.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(MarginDriftThreshold).where(
+            MarginDriftThreshold.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(TenantFeatureFlag).where(
+            TenantFeatureFlag.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(TenantRuleThreshold).where(
+            TenantRuleThreshold.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(NotificationRoutingSetting).where(
+            NotificationRoutingSetting.tenant_id == tenant_id
+        )
+    )
+    
+    # Delete segments and cohorts
+    from backend.app.db.models import (
+        AcquisitionCohort,
+        CohortRetentionSnapshot,
+        CohortReturnSignal,
+    )
+    db.execute(
+        sa.delete(CohortReturnSignal).where(
+            CohortReturnSignal.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(CohortRetentionSnapshot).where(
+            CohortRetentionSnapshot.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(CustomSegment).where(CustomSegment.tenant_id == tenant_id)
+    )
+    db.execute(
+        sa.delete(AcquisitionCohort).where(
+            AcquisitionCohort.tenant_id == tenant_id
+        )
+    )
+    
+    # Delete analysis and annotations
+    from backend.app.db.models import (
+        AnalysisAnnotation,
+        AnalysisViewShare,
+        ExportShare,
+        SavedAnalysisView,
+    )
+    db.execute(
+        sa.delete(AnalysisAnnotation).where(
+            AnalysisAnnotation.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(ExportShare).where(ExportShare.tenant_id == tenant_id)
+    )
+    db.execute(
+        sa.delete(AnalysisViewShare).where(
+            AnalysisViewShare.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(SavedAnalysisView).where(
+            SavedAnalysisView.tenant_id == tenant_id
+        )
+    )
+    
+    # Delete support tickets
+    from backend.app.db.models import SupportTicket
+    db.execute(
+        sa.delete(SupportTicket).where(SupportTicket.tenant_id == tenant_id)
+    )
+    
+    # NOTE: FeatureFlag and SubscriptionPlan are platform-level tables
+    # with no tenant_id. They are NOT deleted when a tenant is deleted.
+    # Only TenantFeatureFlag (already deleted above) is tenant-specific.
+    
+    # Delete integrations and credentials
+    db.execute(
+        sa.delete(ConnectorCredentialVault).where(
+            ConnectorCredentialVault.tenant_id == tenant_id
+        )
+    )
+    db.execute(
+        sa.delete(ConnectorIntegration).where(
+            ConnectorIntegration.tenant_id == tenant_id
+        )
+    )
+    
+    # Delete locations
+    from backend.app.db.models import Location
+    db.execute(sa.delete(Location).where(Location.tenant_id == tenant_id))
+    
+    # Delete privacy requests
+    db.execute(
+        sa.delete(PrivacyRequest).where(PrivacyRequest.tenant_id == tenant_id)
+    )
+    
+    # Delete audit events
+    db.execute(
+        sa.delete(AuditEvent).where(AuditEvent.tenant_id == tenant_id)
+    )
+    
+    # Delete user invitations
+    db.execute(
+        sa.delete(UserInvitation).where(UserInvitation.tenant_id == tenant_id)
+    )
+    
+    # Delete roles
+    db.execute(sa.delete(Role).where(Role.tenant_id == tenant_id))
+    
+    # Delete tenant memberships
+    db.execute(
+        sa.delete(TenantMembership).where(
+            TenantMembership.tenant_id == tenant_id
+        )
+    )
+    
+    # Finally, delete the tenant itself
     db.delete(tenant)
     db.commit()
     
