@@ -89,3 +89,22 @@ class LogoutResponse(BaseModel):
 
     message: str
 
+
+class BootstrapSuperAdminRequest(BaseModel):
+    """Request for POST /auth/bootstrap/super-admin endpoint."""
+
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=72)
+    full_name: str = Field(min_length=1, max_length=255)
+
+
+class BootstrapSuperAdminResponse(BaseModel):
+    """Response for POST /auth/bootstrap/super-admin endpoint."""
+
+    id: uuid.UUID
+    email: str
+    full_name: str
+    is_platform_admin: bool
+    tenant_id: uuid.UUID | None
+    created_at: datetime
+

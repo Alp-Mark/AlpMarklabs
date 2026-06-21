@@ -95,6 +95,8 @@ from backend.app.recommendations.suppression import (
 from backend.app.schemas.account import (
     AccountActivationRequest,
     AccountActivationResponse,
+    BootstrapSuperAdminRequest,
+    BootstrapSuperAdminResponse,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
@@ -964,6 +966,73 @@ def get_subscription_plan(
         limits=SubscriptionPlanLimits(**plan.limits),
         is_active=plan.is_active,
         sort_order=plan.sort_order,
+    )
+
+
+@app.post(
+    "/auth/bootstrap/super-admin",
+    response_model=BootstrapSuperAdminResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def bootstrap_super_admin(
+    request_body: BootstrapSuperAdminRequest,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> BootstrapSuperAdminResponse:
+    """
+    Bootstrap the first Super Admin user.
+    
+    This endpoint should ONLY be used for initial platform setup when the database
+    is empty. It creates the first Super Admin user who can then create tenants
+    and other users through the platform UI.
+    
+    Security:
+    - Only works when there are ZERO users in the database
+    - Returns 403 Forbidden if any user already exists
+    - Creates user with is_platform_admin=true and tenant_id=null
+    
+    Use case:
+    1. Fresh database (after migrations)
+    2. Call this endpoint once to create Super Admin
+    3. Super Admin logs in and creates tenants through UI
+    4. Endpoint becomes permanently disabled
+    """
+    # Check if any user exists
+    existing_user_count = db.scalar(select(func.count()).select_from(User))
+    
+    if existing_user_count and existing_user_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Super Admin already exists. Bootstrap endpoint is disabled. "
+                "Please use the login page to access your account."
+            ),
+        )
+    
+    # Create the first Super Admin user
+    super_admin = User(
+        id=uuid.uuid4(),
+        email=request_body.email,
+        full_name=request_body.full_name,
+        password_hash=hash_password(request_body.password),
+        is_platform_admin=True,
+        is_active=True,
+        created_at=datetime.now(UTC),
+    )
+    
+    db.add(super_admin)
+    db.commit()
+    db.refresh(super_admin)
+    
+    # Note: No audit event for bootstrap since there's no tenant context yet
+    # This is a one-time platform initialization operation
+    
+    return BootstrapSuperAdminResponse(
+        id=super_admin.id,
+        email=super_admin.email,
+        full_name=super_admin.full_name,
+        is_platform_admin=super_admin.is_platform_admin,
+        tenant_id=None,  # Super Admin is not tied to any tenant
+        created_at=super_admin.created_at,
     )
 
 

@@ -2615,6 +2615,467 @@ Example:
 
 ## Step-by-Step Build Instructions
 
+### Phase 0: Super Admin Bootstrap (CRITICAL - START HERE)
+
+**IMPORTANT**: The database is currently empty. The first user you create MUST be a Super Admin. This user is NOT tied to any tenant and has platform-wide access to create and manage all tenants.
+
+---
+
+#### Understanding the User Hierarchy
+
+AlpMark has two distinct types of users:
+
+1. **Super Admin** (Platform Administrator)
+   - AlpMark employee/operator
+   - NOT associated with any tenant (`tenant_id = null`)
+   - Has `is_platform_admin = true` flag
+   - Can create, view, and manage ALL tenants
+   - Cannot be deleted or demoted
+   - First user in the system MUST be a Super Admin
+
+2. **Tenant Users** (Customer Users)
+   - Associated with a specific tenant (`tenant_id = <uuid>`)
+   - Has `is_platform_admin = false`
+   - Role-based access within their tenant (Executive Owner, Brand Admin, etc.)
+   - Cannot see or access other tenants
+
+---
+
+#### Step 1: Create Super Admin Registration UI
+
+Since this is a fresh database, you need a **one-time bootstrap endpoint** to create the first Super Admin. The backend already has this endpoint:
+
+**Endpoint**: `POST /api/platform/super-admin/bootstrap`
+
+**Request Body**:
+```json
+{
+  "email": "admin@alpmark.com",
+  "password": "SecurePassword123!",
+  "full_name": "Platform Administrator"
+}
+```
+
+**Response**:
+```json
+{
+  "id": "uuid",
+  "email": "admin@alpmark.com",
+  "full_name": "Platform Administrator",
+  "is_platform_admin": true,
+  "tenant_id": null,
+  "created_at": "2026-06-21T10:00:00Z"
+}
+```
+
+**Important**: This endpoint should only work when the database has ZERO users. After the first Super Admin is created, this endpoint should return 403 Forbidden.
+
+---
+
+#### Step 2: Build Super Admin Registration Page
+
+Create `src/pages/bootstrap/SuperAdminRegistration.tsx`:
+
+```typescript
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import apiClient from '../../api/client';
+
+export const SuperAdminRegistration: React.FC = () => {
+  const [email, setEmail] = useState('admin@alpmark.com');
+  const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('Platform Administrator');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const response = await apiClient.post('/api/platform/super-admin/bootstrap', {
+        email,
+        password,
+        full_name: fullName,
+      });
+
+      if (response.status === 201) {
+        alert('Super Admin created successfully! You can now log in.');
+        navigate('/login');
+      }
+    } catch (err: any) {
+      if (err.response?.status === 403) {
+        setError('Super Admin already exists. Please use the login page.');
+      } else {
+        setError(err.response?.data?.detail || 'Failed to create Super Admin');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-blue-100">
+      <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-xl shadow-2xl">
+        <div className="text-center">
+          <h1 className="text-4xl font-bold text-blue-600 mb-2">AlpMark Platform</h1>
+          <h2 className="text-2xl font-semibold text-gray-800">Super Admin Bootstrap</h2>
+          <p className="mt-2 text-sm text-gray-600">
+            Create the first platform administrator account
+          </p>
+        </div>
+
+        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+          {error && (
+            <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded">
+              <p className="text-red-700 text-sm">{error}</p>
+            </div>
+          )}
+
+          <div>
+            <label htmlFor="fullName" className="block text-sm font-medium text-gray-700 mb-2">
+              Full Name
+            </label>
+            <input
+              id="fullName"
+              type="text"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              required
+            />
+          </div>
+
+          <div>
+            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+              Email Address
+            </label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              required
+            />
+          </div>
+
+          <div>
+            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              required
+              minLength={8}
+            />
+            <p className="mt-1 text-xs text-gray-500">Minimum 8 characters</p>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-base font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Creating...' : 'Create Super Admin'}
+          </button>
+
+          <div className="text-center text-sm text-gray-600">
+            Already have an account?{' '}
+            <button
+              type="button"
+              onClick={() => navigate('/login')}
+              className="text-blue-600 hover:text-blue-500 font-medium"
+            >
+              Sign in
+            </button>
+          </div>
+        </form>
+
+        <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+          <p className="text-xs text-yellow-800">
+            <strong>⚠️ One-Time Setup:</strong> This page should only be used once to create the first Super Admin. After that, all tenant and user management happens through the Super Admin dashboard.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+```
+
+---
+
+#### Step 3: Update App Routing
+
+Add the bootstrap route to your main router (before authentication guard):
+
+```typescript
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { SuperAdminRegistration } from './pages/bootstrap/SuperAdminRegistration';
+import { Login } from './pages/auth/Login';
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        {/* Bootstrap route - first time setup */}
+        <Route path="/bootstrap" element={<SuperAdminRegistration />} />
+        
+        {/* Auth routes */}
+        <Route path="/login" element={<Login />} />
+        
+        {/* Protected routes come after authentication */}
+        {/* ... rest of your routes */}
+      </Routes>
+    </BrowserRouter>
+  );
+}
+```
+
+---
+
+#### Step 4: Build Super Admin Dashboard
+
+After creating the Super Admin account and logging in, the Super Admin should see a dashboard that allows:
+
+**Super Admin Dashboard** (`src/pages/super-admin/Dashboard.tsx`):
+
+```typescript
+import React, { useEffect, useState } from 'react';
+import apiClient from '../../api/client';
+
+interface Tenant {
+  id: string;
+  name: string;
+  subscription_plan: string;
+  subscription_status: string;
+  created_at: string;
+  max_seats: number;
+  current_seats: number;
+}
+
+export const SuperAdminDashboard: React.FC = () => {
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newTenant, setNewTenant] = useState({
+    name: '',
+    subscription_plan: 'starter',
+    max_seats: 5,
+  });
+
+  useEffect(() => {
+    loadTenants();
+  }, []);
+
+  const loadTenants = async () => {
+    try {
+      const { data } = await apiClient.get('/api/platform/tenants');
+      setTenants(data.tenants);
+    } catch (err) {
+      console.error('Failed to load tenants:', err);
+    }
+  };
+
+  const createTenant = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await apiClient.post('/api/platform/tenants', newTenant);
+      alert('Tenant created successfully!');
+      setShowCreateForm(false);
+      setNewTenant({ name: '', subscription_plan: 'starter', max_seats: 5 });
+      loadTenants();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to create tenant');
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="bg-white shadow">
+        <div className="max-w-7xl mx-auto px-4 py-6">
+          <h1 className="text-3xl font-bold text-gray-900">Super Admin Dashboard</h1>
+          <p className="mt-2 text-gray-600">Platform-wide tenant and system management</p>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        <div className="mb-6 flex justify-between items-center">
+          <h2 className="text-2xl font-semibold">All Tenants</h2>
+          <button
+            onClick={() => setShowCreateForm(!showCreateForm)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            {showCreateForm ? 'Cancel' : 'Create New Tenant'}
+          </button>
+        </div>
+
+        {showCreateForm && (
+          <div className="mb-6 p-6 bg-white rounded-lg shadow">
+            <h3 className="text-xl font-semibold mb-4">Create New Tenant</h3>
+            <form onSubmit={createTenant} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Tenant Name
+                </label>
+                <input
+                  type="text"
+                  value={newTenant.name}
+                  onChange={(e) => setNewTenant({ ...newTenant, name: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Subscription Plan
+                </label>
+                <select
+                  value={newTenant.subscription_plan}
+                  onChange={(e) => setNewTenant({ ...newTenant, subscription_plan: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="starter">Starter</option>
+                  <option value="growth">Growth</option>
+                  <option value="enterprise">Enterprise</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Max Seats
+                </label>
+                <input
+                  type="number"
+                  value={newTenant.max_seats}
+                  onChange={(e) => setNewTenant({ ...newTenant, max_seats: parseInt(e.target.value) })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                  min="1"
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                Create Tenant
+              </button>
+            </form>
+          </div>
+        )}
+
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Plan</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Seats</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {tenants.map((tenant) => (
+                <tr key={tenant.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap font-medium">{tenant.name}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
+                      {tenant.subscription_plan}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded">
+                      {tenant.subscription_status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {tenant.current_seats} / {tenant.max_seats}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {new Date(tenant.created_at).toLocaleDateString()}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <button className="text-blue-600 hover:text-blue-800 mr-3">Edit</button>
+                    <button className="text-gray-600 hover:text-gray-800">View</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+```
+
+---
+
+#### Step 5: Build Order for Replit
+
+**CRITICAL**: Build the frontend in this exact order:
+
+1. ✅ **Phase 0**: Super Admin Bootstrap (this section)
+   - Bootstrap registration page
+   - Super Admin dashboard
+   - Tenant creation UI
+
+2. **Phase 1**: Project Setup
+   - Initialize React + Vite + TypeScript
+   - Configure Tailwind CSS
+   - Set up folder structure
+
+3. **Phase 2**: Authentication
+   - Login page
+   - JWT token management
+   - Auth context
+
+4. **Phase 3**: Executive Owner Dashboard
+   - Executive KPI cards
+   - Charts and analytics
+   - Recommendation cards
+
+5. **Phase 4**: Brand Admin Dashboard
+   - User management
+   - Integration management
+   - Team settings
+
+6. **Phase 5**: Department Personas
+   - Growth Manager dashboard
+   - Retention Manager dashboard
+   - Finance Controller dashboard
+   - Operations Manager dashboard
+
+7. **Phase 6**: Support Operator Dashboard
+   - Support ticket management
+   - System health monitoring
+
+---
+
+#### Step 6: Workflow After Bootstrap
+
+Once you've built Phase 0 and created the Super Admin:
+
+1. Visit `/bootstrap` and create Super Admin account
+2. Log in with Super Admin credentials
+3. Create your first tenant (e.g., "One8 Footwear")
+4. Create Executive Owner user for that tenant
+5. Log in as Executive Owner
+6. Configure integrations and invite team members
+7. **NOW** you can run the seeding script to populate demo data
+
+---
+
 ### Phase 1: Project Setup
 
 **Step 1: Initialize React Project**
