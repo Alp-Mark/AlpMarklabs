@@ -2650,7 +2650,7 @@ Since this is a fresh database, you need a **one-time bootstrap endpoint** to cr
 **Request Body**:
 ```json
 {
-  "email": "admin@alpmark.com",
+  "email": "support@alpmarklabs.com",
   "password": "SecurePassword123!",
   "full_name": "Platform Administrator"
 }
@@ -2660,7 +2660,7 @@ Since this is a fresh database, you need a **one-time bootstrap endpoint** to cr
 ```json
 {
   "id": "uuid",
-  "email": "admin@alpmark.com",
+  "email": "support@alpmarklabs.com",
   "full_name": "Platform Administrator",
   "is_platform_admin": true,
   "tenant_id": null,
@@ -2682,7 +2682,7 @@ import { useNavigate } from 'react-router-dom';
 import apiClient from '../../api/client';
 
 export const SuperAdminRegistration: React.FC = () => {
-  const [email, setEmail] = useState('admin@alpmark.com');
+  const [email, setEmail] = useState('support@alpmarklabs.com');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('Platform Administrator');
   const [error, setError] = useState('');
