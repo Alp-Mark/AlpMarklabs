@@ -2845,9 +2845,9 @@ def update_tenant_status(
 @app.delete("/admin/tenants/{tenant_id}", response_model=AdminTenantDeleteResponse)
 def delete_tenant(
     tenant_id: uuid.UUID,
-    payload: dict = Body(default={}),  # noqa: B008
-    _auth: SuperAdminDep = Depends(SuperAdminDep),  # noqa: B008
+    _auth: SuperAdminDep,
     db: Session = Depends(get_db),  # noqa: B008
+    payload: dict = Body(default={}),  # noqa: B008
 ) -> AdminTenantDeleteResponse:
     """D4: Soft-delete tenant (super-admin only).
     
