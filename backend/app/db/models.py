@@ -59,6 +59,17 @@ class Tenant(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+    # Admin audit trail fields
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active"
+    )  # active, suspended, deleted
+    status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suspended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     memberships: Mapped[list[TenantMembership]] = relationship(back_populates="tenant")
     invitations: Mapped[list[UserInvitation]] = relationship(back_populates="tenant")
@@ -196,6 +207,9 @@ class User(Base):
     )
     is_platform_admin: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -405,6 +419,43 @@ class AuditEvent(Base):
     )
 
     tenant: Mapped[Tenant] = relationship(back_populates="audit_events")
+
+
+class AdminAuditLog(Base):
+    """
+    Platform-level audit log for Super Admin actions.
+    Tracks tenant lifecycle events, user management, and admin operations.
+    """
+
+    __tablename__ = "admin_audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    admin_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    action_type: Mapped[str] = mapped_column(
+        String(100), nullable=False, index=True
+    )  # e.g., tenant_created, tenant_suspended, tenant_deleted
+    resource_type: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )  # e.g., tenant, user, subscription
+    resource_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    changes: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )  # Before/after state
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+
+    # Relationships (optional - can query without them)
+    # tenant: Mapped[Tenant | None] = relationship()
+    # admin_user: Mapped[User] = relationship()
 
 
 class PrivacyRequest(Base):

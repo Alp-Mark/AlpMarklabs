@@ -17,6 +17,10 @@ class AdminTenantResponse(BaseModel):
     name: str
     slug: str
     is_active: bool
+    status: str  # active, suspended, deleted
+    status_reason: str | None
+    suspended_at: datetime | None
+    deleted_at: datetime | None
     billing_plan: str
     billing_cycle: str
     billing_status: str
@@ -25,9 +29,13 @@ class AdminTenantResponse(BaseModel):
     locale: str
     created_at: datetime
     updated_at: datetime
-    # Computed fields
+    # Computed fields - user counts
     total_users: int
     active_users: int
+    # Usage metrics
+    total_logins: int | None = None
+    last_activity_at: datetime | None = None
+    active_users_30d: int | None = None
 
 
 class AdminTenantListResponse(BaseModel):
@@ -55,6 +63,9 @@ class AdminTenantStatusUpdateRequest(BaseModel):
     """Request to suspend or activate a tenant."""
 
     is_active: bool
+    reason: str | None = Field(
+        None, max_length=1000, description="Optional reason for status change"
+    )
 
 
 class AdminTenantDeleteResponse(BaseModel):

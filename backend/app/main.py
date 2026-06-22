@@ -108,6 +108,10 @@ from backend.app.schemas.account import (
     UserResponse,
     UserSessionResponse,
 )
+from backend.app.schemas.admin_audit import (
+    AdminAuditLogListResponse,
+    AdminAuditLogResponse,
+)
 from backend.app.schemas.admin_tenant import (
     AdminTenantDeleteResponse,
     AdminTenantListResponse,
@@ -2533,6 +2537,8 @@ def list_all_tenants(
     ).all()
 
     # Compute user counts for each tenant
+    from backend.app.admin_audit import get_tenant_usage_metrics
+
     tenant_responses = []
     for tenant in tenants:
         # Count memberships for this tenant
@@ -2549,12 +2555,21 @@ def list_all_tenants(
             )
         )
 
+        # Get usage metrics
+        total_logins, last_activity_at, active_users_30d = (
+            get_tenant_usage_metrics(db, tenant.id)
+        )
+
         tenant_responses.append(
             AdminTenantResponse(
                 id=tenant.id,
                 name=tenant.name,
                 slug=tenant.slug,
                 is_active=tenant.is_active,
+                status=tenant.status,
+                status_reason=tenant.status_reason,
+                suspended_at=tenant.suspended_at,
+                deleted_at=tenant.deleted_at,
                 billing_plan=tenant.billing_plan,
                 billing_cycle=tenant.billing_cycle,
                 billing_status=tenant.billing_status,
@@ -2565,6 +2580,9 @@ def list_all_tenants(
                 updated_at=tenant.updated_at,
                 total_users=total_users or 0,
                 active_users=active_users or 0,
+                total_logins=total_logins,
+                last_activity_at=last_activity_at,
+                active_users_30d=active_users_30d,
             )
         )
 
@@ -2583,6 +2601,8 @@ def get_tenant_details(
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AdminTenantResponse:
     """D4: Get single tenant details (super-admin only)."""
+    from backend.app.admin_audit import get_tenant_usage_metrics
+    
     tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
     if not tenant:
         raise HTTPException(
@@ -2604,11 +2624,21 @@ def get_tenant_details(
         )
     )
 
+    # Get usage metrics
+
+    total_logins, last_activity_at, active_users_30d = get_tenant_usage_metrics(
+        db, tenant.id
+    )
+
     return AdminTenantResponse(
         id=tenant.id,
         name=tenant.name,
         slug=tenant.slug,
         is_active=tenant.is_active,
+        status=tenant.status,
+        status_reason=tenant.status_reason,
+        suspended_at=tenant.suspended_at,
+        deleted_at=tenant.deleted_at,
         billing_plan=tenant.billing_plan,
         billing_cycle=tenant.billing_cycle,
         billing_status=tenant.billing_status,
@@ -2619,6 +2649,9 @@ def get_tenant_details(
         updated_at=tenant.updated_at,
         total_users=total_users or 0,
         active_users=active_users or 0,
+        total_logins=total_logins,
+        last_activity_at=last_activity_at,
+        active_users_30d=active_users_30d,
     )
 
 
@@ -2666,11 +2699,22 @@ def update_tenant(
         )
     )
 
+    # Get usage metrics
+    from backend.app.admin_audit import get_tenant_usage_metrics
+
+    total_logins, last_activity_at, active_users_30d = get_tenant_usage_metrics(
+        db, tenant.id
+    )
+
     return AdminTenantResponse(
         id=tenant.id,
         name=tenant.name,
         slug=tenant.slug,
         is_active=tenant.is_active,
+        status=tenant.status,
+        status_reason=tenant.status_reason,
+        suspended_at=tenant.suspended_at,
+        deleted_at=tenant.deleted_at,
         billing_plan=tenant.billing_plan,
         billing_cycle=tenant.billing_cycle,
         billing_status=tenant.billing_status,
@@ -2681,6 +2725,9 @@ def update_tenant(
         updated_at=tenant.updated_at,
         total_users=total_users or 0,
         active_users=active_users or 0,
+        total_logins=total_logins,
+        last_activity_at=last_activity_at,
+        active_users_30d=active_users_30d,
     )
 
 
@@ -2692,6 +2739,8 @@ def update_tenant_status(
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AdminTenantResponse:
     """D4: Suspend or activate tenant (super-admin only)."""
+    from backend.app.admin_audit import write_admin_audit_log
+    
     tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
     if not tenant:
         raise HTTPException(
@@ -2699,9 +2748,22 @@ def update_tenant_status(
             detail="Tenant not found",
         )
 
-    tenant.is_active = payload.is_active
+    # Track old values for audit log
+    old_is_active = tenant.is_active
+    old_status = tenant.status
 
-    # Write audit event
+    # Update tenant status
+    tenant.is_active = payload.is_active
+    if payload.is_active:
+        tenant.status = "active"
+        tenant.status_reason = None
+        tenant.suspended_at = None
+    else:
+        tenant.status = "suspended"
+        tenant.status_reason = payload.reason
+        tenant.suspended_at = datetime.now(UTC)
+
+    # Write tenant audit event (legacy)
     actor = db.scalar(select(User).where(User.email == _auth.email))
     write_audit_event(
         db,
@@ -2709,9 +2771,26 @@ def update_tenant_status(
         action="tenant.status_updated",
         entity_type="tenant",
         entity_id=str(tenant_id),
-        details={"is_active": payload.is_active},
+        details={"is_active": payload.is_active, "reason": payload.reason},
         actor_user_id=actor.id if actor else None,
     )
+
+    # Write admin audit log
+    if actor:
+        action_type = "tenant_activated" if payload.is_active else "tenant_suspended"
+        write_admin_audit_log(
+            db,
+            admin_user_id=actor.id,
+            action_type=action_type,
+            resource_type="tenant",
+            resource_id=str(tenant_id),
+            tenant_id=tenant_id,
+            changes={
+                "is_active": {"old": old_is_active, "new": payload.is_active},
+                "status": {"old": old_status, "new": tenant.status},
+            },
+            reason=payload.reason,
+        )
 
     db.commit()
     db.refresh(tenant)
@@ -2730,11 +2809,22 @@ def update_tenant_status(
         )
     )
 
+    # Get usage metrics
+    from backend.app.admin_audit import get_tenant_usage_metrics
+
+    total_logins, last_activity_at, active_users_30d = get_tenant_usage_metrics(
+        db, tenant.id
+    )
+
     return AdminTenantResponse(
         id=tenant.id,
         name=tenant.name,
         slug=tenant.slug,
         is_active=tenant.is_active,
+        status=tenant.status,
+        status_reason=tenant.status_reason,
+        suspended_at=tenant.suspended_at,
+        deleted_at=tenant.deleted_at,
         billing_plan=tenant.billing_plan,
         billing_cycle=tenant.billing_cycle,
         billing_status=tenant.billing_status,
@@ -2745,346 +2835,160 @@ def update_tenant_status(
         updated_at=tenant.updated_at,
         total_users=total_users or 0,
         active_users=active_users or 0,
+        total_logins=total_logins,
+        last_activity_at=last_activity_at,
+        active_users_30d=active_users_30d,
     )
+
 
 
 @app.delete("/admin/tenants/{tenant_id}", response_model=AdminTenantDeleteResponse)
 def delete_tenant(
     tenant_id: uuid.UUID,
-    _auth: SuperAdminDep,
+    payload: dict = Body(default={}),  # noqa: B008
+    _auth: SuperAdminDep = Depends(SuperAdminDep),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AdminTenantDeleteResponse:
-    """D4: Delete tenant and all associated data (super-admin only).
+    """D4: Soft-delete tenant (super-admin only).
     
-    WARNING: This is a destructive operation that:
-    - Deletes the tenant record
-    - Cascades to delete all tenant memberships, data, and resources
-    - Cannot be undone
+    This performs a SOFT DELETE:
+    - Marks tenant as deleted with deleted_at timestamp
+    - Sets status to 'deleted'
+    - Sets is_active to False
+    - Preserves all data for audit/recovery
+    - Records action in admin audit log
     
-    Use with extreme caution.
+    For hard delete (irreversible), contact platform support.
     """
+    from backend.app.admin_audit import write_admin_audit_log
+    
     tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
     if not tenant:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Tenant not found",
         )
+    
+    if tenant.deleted_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tenant already deleted",
+        )
 
     tenant_name = tenant.name
+    reason = payload.get("reason")
     
-    # Manually delete all child records that reference this tenant
-    # Order matters - delete child records before parent records
+    # Soft delete
+    tenant.deleted_at = datetime.now(UTC)
+    tenant.status = "deleted"
+    tenant.status_reason = reason or "Deleted by Super Admin"
+    tenant.is_active = False
     
-    # Delete data snapshots and analytics
-    from backend.app.db.models import (
-        AcquisitionMetricsSnapshot,
-        CohortSnapshot,
-        CostDriverSnapshot,
-        ExecutiveKpiSnapshot,
-        InventoryRiskSnapshot,
-        MarginDriftSnapshot,
-        OperationalImpactSnapshot,
-        RetentionDailySnapshot,
-        SegmentMarginSnapshot,
-    )
-    db.execute(
-        sa.delete(AcquisitionMetricsSnapshot).where(
-            AcquisitionMetricsSnapshot.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(CohortSnapshot).where(CohortSnapshot.tenant_id == tenant_id)
-    )
-    db.execute(
-        sa.delete(CostDriverSnapshot).where(
-            CostDriverSnapshot.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(ExecutiveKpiSnapshot).where(
-            ExecutiveKpiSnapshot.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(InventoryRiskSnapshot).where(
-            InventoryRiskSnapshot.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(MarginDriftSnapshot).where(
-            MarginDriftSnapshot.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(OperationalImpactSnapshot).where(
-            OperationalImpactSnapshot.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(RetentionDailySnapshot).where(
-            RetentionDailySnapshot.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(SegmentMarginSnapshot).where(
-            SegmentMarginSnapshot.tenant_id == tenant_id
-        )
+    # Write tenant audit event (legacy)
+    actor = db.scalar(select(User).where(User.email == _auth.email))
+    write_audit_event(
+        db,
+        tenant_id=tenant_id,
+        action="tenant.deleted",
+        entity_type="tenant",
+        entity_id=str(tenant_id),
+        details={"reason": reason},
+        actor_user_id=actor.id if actor else None,
     )
     
-    # Delete integration data
-    from backend.app.db.models import (
-        GoogleAdSpend,
-        MetaAdSpend,
-        ShopifyInventoryItem,
-        ShopifyOrderLineItem,
-    )
-    db.execute(
-        sa.delete(ShopifyOrderLineItem).where(
-            ShopifyOrderLineItem.tenant_id == tenant_id
+    # Write admin audit log
+    if actor:
+        write_admin_audit_log(
+            db,
+            admin_user_id=actor.id,
+            action_type="tenant_deleted",
+            resource_type="tenant",
+            resource_id=str(tenant_id),
+            tenant_id=tenant_id,
+            changes={
+                "status": {"old": "active", "new": "deleted"},
+                "tenant_name": tenant_name,
+            },
+            reason=reason,
         )
-    )
-    db.execute(
-        sa.delete(ShopifyInventoryItem).where(
-            ShopifyInventoryItem.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(MetaAdSpend).where(MetaAdSpend.tenant_id == tenant_id)
-    )
-    db.execute(
-        sa.delete(GoogleAdSpend).where(GoogleAdSpend.tenant_id == tenant_id)
-    )
     
-    # Delete Shopify orders (parent of line items)
-    from backend.app.db.models import ShopifyOrder
-    db.execute(
-        sa.delete(ShopifyOrder).where(ShopifyOrder.tenant_id == tenant_id)
-    )
-    
-    # Delete recommendations and simulations
-    from backend.app.db.models import RecommendationSuppressionState
-    db.execute(
-        sa.delete(RecommendationSuppressionState).where(
-            RecommendationSuppressionState.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(Recommendation).where(Recommendation.tenant_id == tenant_id)
-    )
-    # Delete scenarios via simulation FK
-    db.execute(
-        sa.delete(Scenario).where(
-            Scenario.simulation_id.in_(
-                sa.select(Simulation.id).where(
-                    Simulation.tenant_id == tenant_id
-                )
-            )
-        )
-    )
-    db.execute(sa.delete(Simulation).where(Simulation.tenant_id == tenant_id))
-    
-    # Delete alerts and notifications
-    from backend.app.db.models import (
-        AlertAcknowledgement,
-        AlertDismissal,
-        AlertEventLog,
-        AlertRecipient,
-        AlertThreshold,
-        EmailDeliveryLog,
-    )
-    db.execute(
-        sa.delete(AlertAcknowledgement).where(
-            AlertAcknowledgement.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(AlertDismissal).where(AlertDismissal.tenant_id == tenant_id)
-    )
-    db.execute(
-        sa.delete(AlertEventLog).where(AlertEventLog.tenant_id == tenant_id)
-    )
-    db.execute(
-        sa.delete(AlertRecipient).where(AlertRecipient.tenant_id == tenant_id)
-    )
-    db.execute(
-        sa.delete(AlertThreshold).where(AlertThreshold.tenant_id == tenant_id)
-    )
-    db.execute(
-        sa.delete(EmailDeliveryLog).where(
-            EmailDeliveryLog.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(Notification).where(Notification.tenant_id == tenant_id)
-    )
-    
-    # Delete user-related data
-    from backend.app.db.models import UserNotificationPreference
-    db.execute(
-        sa.delete(UserNotificationPreference).where(
-            UserNotificationPreference.tenant_id == tenant_id
-        )
-    )
-    
-    # Delete config and settings
-    from backend.app.db.models import (
-        CostInput,
-        CostInputVersion,
-        DelegationRule,
-        EscalationRule,
-        InventoryRiskThreshold,
-        MarginDriftThreshold,
-        TenantFeatureFlag,
-        TenantRuleThreshold,
-    )
-    db.execute(
-        sa.delete(CostInputVersion).where(
-            CostInputVersion.tenant_id == tenant_id
-        )
-    )
-    db.execute(sa.delete(CostInput).where(CostInput.tenant_id == tenant_id))
-    db.execute(
-        sa.delete(DelegationRule).where(DelegationRule.tenant_id == tenant_id)
-    )
-    db.execute(
-        sa.delete(EscalationRule).where(EscalationRule.tenant_id == tenant_id)
-    )
-    db.execute(
-        sa.delete(InventoryRiskThreshold).where(
-            InventoryRiskThreshold.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(MarginDriftThreshold).where(
-            MarginDriftThreshold.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(TenantFeatureFlag).where(
-            TenantFeatureFlag.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(TenantRuleThreshold).where(
-            TenantRuleThreshold.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(NotificationRoutingSetting).where(
-            NotificationRoutingSetting.tenant_id == tenant_id
-        )
-    )
-    
-    # Delete segments and cohorts
-    from backend.app.db.models import (
-        AcquisitionCohort,
-        CohortRetentionSnapshot,
-        CohortReturnSignal,
-    )
-    db.execute(
-        sa.delete(CohortReturnSignal).where(
-            CohortReturnSignal.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(CohortRetentionSnapshot).where(
-            CohortRetentionSnapshot.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(CustomSegment).where(CustomSegment.tenant_id == tenant_id)
-    )
-    db.execute(
-        sa.delete(AcquisitionCohort).where(
-            AcquisitionCohort.tenant_id == tenant_id
-        )
-    )
-    
-    # Delete analysis and annotations
-    from backend.app.db.models import (
-        AnalysisAnnotation,
-        AnalysisViewShare,
-        ExportShare,
-        SavedAnalysisView,
-    )
-    db.execute(
-        sa.delete(AnalysisAnnotation).where(
-            AnalysisAnnotation.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(ExportShare).where(ExportShare.tenant_id == tenant_id)
-    )
-    db.execute(
-        sa.delete(AnalysisViewShare).where(
-            AnalysisViewShare.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(SavedAnalysisView).where(
-            SavedAnalysisView.tenant_id == tenant_id
-        )
-    )
-    
-    # Delete support tickets
-    from backend.app.db.models import SupportTicket
-    db.execute(
-        sa.delete(SupportTicket).where(SupportTicket.tenant_id == tenant_id)
-    )
-    
-    # NOTE: FeatureFlag and SubscriptionPlan are platform-level tables
-    # with no tenant_id. They are NOT deleted when a tenant is deleted.
-    # Only TenantFeatureFlag (already deleted above) is tenant-specific.
-    
-    # Delete integrations and credentials
-    db.execute(
-        sa.delete(ConnectorCredentialVault).where(
-            ConnectorCredentialVault.tenant_id == tenant_id
-        )
-    )
-    db.execute(
-        sa.delete(ConnectorIntegration).where(
-            ConnectorIntegration.tenant_id == tenant_id
-        )
-    )
-    
-    # Delete locations
-    from backend.app.db.models import Location
-    db.execute(sa.delete(Location).where(Location.tenant_id == tenant_id))
-    
-    # Delete privacy requests
-    db.execute(
-        sa.delete(PrivacyRequest).where(PrivacyRequest.tenant_id == tenant_id)
-    )
-    
-    # Delete audit events
-    db.execute(
-        sa.delete(AuditEvent).where(AuditEvent.tenant_id == tenant_id)
-    )
-    
-    # Delete user invitations
-    db.execute(
-        sa.delete(UserInvitation).where(UserInvitation.tenant_id == tenant_id)
-    )
-    
-    # Delete tenant memberships (must be before roles due to FK)
-    db.execute(
-        sa.delete(TenantMembership).where(
-            TenantMembership.tenant_id == tenant_id
-        )
-    )
-    
-    # Delete roles
-    db.execute(sa.delete(Role).where(Role.tenant_id == tenant_id))
-    
-    # Finally, delete the tenant itself
-    db.delete(tenant)
     db.commit()
     
     return AdminTenantDeleteResponse(
-        message=f"Tenant '{tenant_name}' and all associated data deleted successfully",
+        message=(
+            f"Tenant '{tenant_name}' soft-deleted successfully "
+            "(data preserved for recovery)"
+        ),
         tenant_id=tenant_id,
-        deleted_at=datetime.now(UTC),
+        deleted_at=tenant.deleted_at,
+    )
+
+
+@app.get("/admin/audit-log", response_model=AdminAuditLogListResponse)
+def get_admin_audit_log(
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    tenant_id: UUID | None = Query(None, description="Filter by tenant ID"),  # noqa: B008
+    action_type: str | None = Query(None, description="Filter by action type"),  # noqa: B008
+    page: int = Query(1, ge=1, description="Page number"),  # noqa: B008
+    page_size: int = Query(1, ge=1, le=200, description="Items per page"),  # noqa: B008
+) -> AdminAuditLogListResponse:
+    """D4: Get admin audit log (super-admin only).
+    
+    Returns paginated list of admin actions with optional filters.
+    """
+    from backend.app.db.models import AdminAuditLog
+    
+    # Build query
+    query = select(AdminAuditLog).order_by(AdminAuditLog.created_at.desc())
+    
+    # Apply filters
+    if tenant_id:
+        query = query.where(AdminAuditLog.tenant_id == tenant_id)
+    if action_type:
+        query = query.where(AdminAuditLog.action_type == action_type)
+    
+    # Count total
+    count_query = select(func.count()).select_from(AdminAuditLog)
+    if tenant_id:
+        count_query = count_query.where(AdminAuditLog.tenant_id == tenant_id)
+    if action_type:
+        count_query = count_query.where(AdminAuditLog.action_type == action_type)
+    
+    total = db.scalar(count_query) or 0
+    
+    # Paginate
+    offset = (page - 1) * page_size
+    query = query.limit(page_size).offset(offset)
+    
+    logs = db.scalars(query).all()
+    
+    # Enrich with admin user email
+    log_responses = []
+    for log in logs:
+        admin_user = db.scalar(select(User).where(User.id == log.admin_user_id))
+        log_responses.append(
+            AdminAuditLogResponse(
+                id=log.id,
+                tenant_id=log.tenant_id,
+                admin_user_id=log.admin_user_id,
+                admin_user_email=admin_user.email if admin_user else None,
+                action_type=log.action_type,
+                resource_type=log.resource_type,
+                resource_id=log.resource_id,
+                changes=log.changes,
+                reason=log.reason,
+                ip_address=log.ip_address,
+                user_agent=log.user_agent,
+                created_at=log.created_at,
+            )
+        )
+    
+    return AdminAuditLogListResponse(
+        logs=log_responses,
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
