@@ -50,6 +50,7 @@ def calculate_executive_overview(
                 "total_refunds"
             ),
             func.max(ShopifyOrder.synced_at).label("last_synced"),
+            func.max(ShopifyOrder.currency).label("currency"),
         )
         .where(ShopifyOrder.tenant_id == tenant_id)
         .where(ShopifyOrder.order_created_at >= period_start)
@@ -59,6 +60,7 @@ def calculate_executive_overview(
     total_revenue = float(revenue_result.total_revenue or 0.0)
     total_refunds = float(revenue_result.total_refunds or 0.0)
     last_synced = revenue_result.last_synced
+    currency = revenue_result.currency or "USD"  # Default to USD if no orders
 
     # Net revenue after refunds
     net_revenue = total_revenue - total_refunds
@@ -167,7 +169,7 @@ def calculate_executive_overview(
         period_start=period_start,
         period_end=period_end,
         data_last_synced_at=last_synced.isoformat() if last_synced else None,
-        currency="USD",
+        currency=currency,
     )
 
 
