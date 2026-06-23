@@ -8,14 +8,14 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 SYSTEM_SYNC_CADENCE = {
     "connector-sync-scheduler": timedelta(minutes=15),
     "connector-token-expiry-monitor": timedelta(hours=1),
-    "executive-kpi-computation-schedule": timedelta(hours=24),
-    "acquisition-metrics-computation-schedule": timedelta(hours=24),
-    "retention-cohort-computation-schedule": timedelta(hours=24),
-    "retention-segment-computation-schedule": timedelta(hours=24),
-    "finance-cost-drift-schedule": timedelta(hours=24),
-    "inventory-risk-schedule": timedelta(hours=24),
-    "operational-impact-schedule": timedelta(hours=24),
-    "rule-engine-schedule": timedelta(hours=24),
+    "executive-kpi-computation-schedule": timedelta(hours=4),  # Every 4 hours
+    "acquisition-metrics-computation-schedule": timedelta(hours=4),  # Every 4 hours
+    "retention-cohort-computation-schedule": timedelta(hours=4),  # Every 4 hours
+    "retention-segment-computation-schedule": timedelta(hours=4),  # Every 4 hours
+    "finance-cost-drift-schedule": timedelta(hours=4),  # Every 4 hours
+    "inventory-risk-schedule": timedelta(hours=4),  # Every 4 hours
+    "operational-impact-schedule": timedelta(hours=4),  # Every 4 hours
+    "rule-engine-schedule": timedelta(hours=1),  # Every 1 hour - FAST decision intelligence
     "threshold-suggestion-schedule": timedelta(days=7),
 }
 
