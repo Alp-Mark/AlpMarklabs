@@ -17,7 +17,8 @@ if config.config_file_name is not None:
 
 
 def get_database_url() -> str:
-    url = os.getenv(
+    # Prefer PUBLIC_URL for Railway CLI compatibility (local execution)
+    url = os.getenv("DATABASE_PUBLIC_URL") or os.getenv(
         "DATABASE_URL",
         "postgresql+psycopg://alpmark:alpmark@localhost:5432/alpmark",
     )
