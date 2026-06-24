@@ -192,6 +192,11 @@ class Tenant(Base):
     simulations: Mapped[list[Simulation]] = relationship(
         back_populates="tenant"
     )
+    # Phase 1: Optimization engine relationships
+    optimization_strategies: Mapped[list[OptimizationStrategy]] = relationship()
+    optimization_runs: Mapped[list[OptimizationRun]] = relationship()
+    fitted_models: Mapped[list[FittedModel]] = relationship()
+    optimization_experiments: Mapped[list[OptimizationExperiment]] = relationship()
     roles: Mapped[list[Role]] = relationship(back_populates="tenant")
 
 
@@ -1693,6 +1698,10 @@ class Recommendation(Base):
     data_sources: Mapped[list] = mapped_column(
         JSON, nullable=False, server_default="[]"
     )
+    # Phase 1: Source of recommendation (threshold-based vs optimization-based)
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="threshold"
+    )
     review_note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     # FR-076 / T-062: Stamps when recommendation transitions to "approved" status.
     approved_at: Mapped[datetime | None] = mapped_column(
@@ -2910,3 +2919,244 @@ class TenantFeatureFlag(Base):
     tenant: Mapped[Tenant] = relationship()
     feature_flag: Mapped[FeatureFlag] = relationship(back_populates="tenant_overrides")
     changed_by_user: Mapped[User | None] = relationship()
+
+
+class OptimizationStrategy(Base):
+    """Phase 1: Optimization strategy configuration per tenant and domain.
+
+    Stores which optimization algorithm each tenant uses for a specific domain.
+    Examples:
+    - domain='acquisition', strategy_name='Hill Curve Budget Allocation'
+    - domain='margin', strategy_name='Dynamic Pricing Optimizer'
+    - domain='retention', strategy_name='Email Campaign Timing'
+    """
+
+    __tablename__ = "optimization_strategies"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "domain",
+            "strategy_name",
+            name="uq_strategy_per_tenant_domain",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    domain: Mapped[str] = mapped_column(String(30), nullable=False)
+    strategy_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    strategy_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship()
+    optimization_runs: Mapped[list[OptimizationRun]] = relationship(
+        back_populates="strategy"
+    )
+    fitted_models: Mapped[list[FittedModel]] = relationship(back_populates="strategy")
+
+
+class OptimizationRun(Base):
+    """Phase 1: Log of each optimization engine execution.
+
+    Tracks when optimization runs, what inputs it used, results,
+    errors, and performance. Each run may generate recommendations
+    and fitted models.
+    """
+
+    __tablename__ = "optimization_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    strategy_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("optimization_strategies.id"), nullable=False, index=True
+    )
+    run_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, index=True
+    )  # pending, running, success, failed
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    input_snapshot_ids: Mapped[list] = mapped_column(
+        JSON, nullable=False, server_default="[]"
+    )
+    optimization_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    execution_time_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship()
+    strategy: Mapped[OptimizationStrategy] = relationship(
+        back_populates="optimization_runs"
+    )
+    fitted_models: Mapped[list[FittedModel]] = relationship(
+        back_populates="optimization_run"
+    )
+    optimization_recommendations: Mapped[list[OptimizationRecommendation]] = (
+        relationship(back_populates="optimization_run")
+    )
+
+
+class FittedModel(Base):
+    """Phase 1: ML model metadata and S3 storage keys.
+
+    Stores references to pickled ML models in AWS S3.
+    Models are too large for database storage (can be 10-100MB),
+    so we store metadata here and actual model files in S3.
+    """
+
+    __tablename__ = "fitted_models"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    strategy_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("optimization_strategies.id"), nullable=False, index=True
+    )
+    optimization_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("optimization_runs.id"), nullable=False
+    )
+    model_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # hill_curve, linear_regression, random_forest, etc.
+    s3_key: Mapped[str] = mapped_column(
+        String(500), nullable=False, unique=True, index=True
+    )
+    model_metadata: Mapped[dict] = mapped_column(
+        JSON, nullable=False, server_default="{}"
+    )
+    accuracy_metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    trained_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship()
+    strategy: Mapped[OptimizationStrategy] = relationship(
+        back_populates="fitted_models"
+    )
+    optimization_run: Mapped[OptimizationRun] = relationship(
+        back_populates="fitted_models"
+    )
+    optimization_recommendations: Mapped[list[OptimizationRecommendation]] = (
+        relationship(back_populates="fitted_model")
+    )
+
+
+class OptimizationRecommendation(Base):
+    """Phase 1: Link between optimization runs and generated recommendations.
+
+    When the optimization engine generates a recommendation, this table
+    stores the optimization-specific insights (e.g., optimal spend level,
+    expected improvement, alternative scenarios).
+    """
+
+    __tablename__ = "optimization_recommendations"
+    __table_args__ = (
+        UniqueConstraint(
+            "recommendation_id",
+            name="uq_one_optimization_per_recommendation",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("recommendations.id"), nullable=False, index=True
+    )
+    optimization_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("optimization_runs.id"), nullable=False, index=True
+    )
+    fitted_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("fitted_models.id"), nullable=True
+    )
+    optimization_insight: Mapped[dict] = mapped_column(
+        JSON, nullable=False, server_default="{}"
+    )
+    alternative_scenarios: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    recommendation: Mapped[Recommendation] = relationship()
+    optimization_run: Mapped[OptimizationRun] = relationship(
+        back_populates="optimization_recommendations"
+    )
+    fitted_model: Mapped[FittedModel | None] = relationship(
+        back_populates="optimization_recommendations"
+    )
+
+
+class OptimizationExperiment(Base):
+    """Phase 1: A/B testing framework for threshold vs optimization.
+
+    Allows running controlled experiments to compare threshold-based
+    recommendations against optimization-based recommendations.
+    Tracks metrics for both control and treatment groups.
+    """
+
+    __tablename__ = "optimization_experiments"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    experiment_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    domain: Mapped[str] = mapped_column(
+        String(30), nullable=False, index=True
+    )  # acquisition, retention, margin, etc.
+    experiment_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # threshold_vs_optimization, strategy_comparison, etc.
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    control_group_config: Mapped[dict] = mapped_column(
+        JSON, nullable=False, server_default="{}"
+    )
+    treatment_group_config: Mapped[dict] = mapped_column(
+        JSON, nullable=False, server_default="{}"
+    )
+    control_metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    treatment_metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    conclusion: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    winner: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )  # control, treatment, no_difference
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship()
