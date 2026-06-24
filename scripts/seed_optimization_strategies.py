@@ -38,12 +38,12 @@ _public_db_url = os.getenv("DATABASE_PUBLIC_URL")
 if _public_db_url:
     os.environ["DATABASE_URL"] = _public_db_url
 
-from backend.app.db.models import OptimizationStrategy  # noqa: E402
+from backend.app.db.models import OptimizationStrategy, Tenant  # noqa: E402
 from backend.app.db.session import SessionLocal  # noqa: E402
 from sqlalchemy import delete, func, select  # noqa: E402
 
-# Fixed demo tenant ID (matches seed_one8.py)
-TENANT_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
+# Tenant slug to look up (works in both local and production)
+TENANT_SLUG = "one8"
 
 
 def seed_optimization_strategies() -> None:
@@ -51,26 +51,38 @@ def seed_optimization_strategies() -> None:
     db = SessionLocal()
     
     try:
-        # Delete existing optimization strategies for One8 (idempotent)
+        # Look up One8 tenant by slug
+        tenant = db.scalar(select(Tenant).where(Tenant.slug == TENANT_SLUG))
+        if not tenant:
+            print(f"❌ Tenant with slug '{TENANT_SLUG}' not found")
+            print("   Available tenants:")
+            for t in db.scalars(select(Tenant).order_by(Tenant.created_at)):
+                print(f"   - {t.slug} (ID: {t.id})")
+            return
+        
+        tenant_id = tenant.id
+        print(f"✅ Found tenant: {tenant.name} (ID: {tenant_id})")
+        
+        # Delete existing optimization strategies for this tenant (idempotent)
         existing_count = db.scalar(
             select(func.count())
             .select_from(OptimizationStrategy)
-            .where(OptimizationStrategy.tenant_id == TENANT_ID)
+            .where(OptimizationStrategy.tenant_id == tenant_id)
         )
         
         if existing_count and existing_count > 0:
             db.execute(
                 delete(OptimizationStrategy).where(
-                    OptimizationStrategy.tenant_id == TENANT_ID
+                    OptimizationStrategy.tenant_id == tenant_id
                 )
             )
-            print(f"🗑️  Deleted {existing_count} existing optimization strategies for One8")
+            print(f"🗑️  Deleted {existing_count} existing optimization strategies for {tenant.name}")
         
         # Define 4 default strategies
         strategies = [
             OptimizationStrategy(
                 id=uuid.uuid4(),
-                tenant_id=TENANT_ID,
+                tenant_id=tenant_id,
                 domain="acquisition",
                 strategy_name="budget_allocation",
                 strategy_type="hill_curve_saturation",
@@ -85,7 +97,7 @@ def seed_optimization_strategies() -> None:
             ),
             OptimizationStrategy(
                 id=uuid.uuid4(),
-                tenant_id=TENANT_ID,
+                tenant_id=tenant_id,
                 domain="finance",
                 strategy_name="pricing_optimization",
                 strategy_type="elasticity_model",
@@ -100,7 +112,7 @@ def seed_optimization_strategies() -> None:
             ),
             OptimizationStrategy(
                 id=uuid.uuid4(),
-                tenant_id=TENANT_ID,
+                tenant_id=tenant_id,
                 domain="retention",
                 strategy_name="retention_campaign_targeting",
                 strategy_type="propensity_scoring",
@@ -116,7 +128,7 @@ def seed_optimization_strategies() -> None:
             ),
             OptimizationStrategy(
                 id=uuid.uuid4(),
-                tenant_id=TENANT_ID,
+                tenant_id=tenant_id,
                 domain="operations",
                 strategy_name="inventory_reorder_optimization",
                 strategy_type="demand_forecasting",
@@ -136,7 +148,7 @@ def seed_optimization_strategies() -> None:
         db.add_all(strategies)
         db.commit()
         
-        print(f"✅ Created {len(strategies)} optimization strategies for One8:")
+        print(f"✅ Created {len(strategies)} optimization strategies for {tenant.name}:")
         for s in strategies:
             print(f"   • {s.domain:15} | {s.strategy_name:35} | {s.strategy_type}")
         
@@ -144,9 +156,9 @@ def seed_optimization_strategies() -> None:
         final_count = db.scalar(
             select(func.count())
             .select_from(OptimizationStrategy)
-            .where(OptimizationStrategy.tenant_id == TENANT_ID)
+            .where(OptimizationStrategy.tenant_id == tenant_id)
         )
-        print(f"\n📊 Verification: {final_count} strategies in database for One8")
+        print(f"\n📊 Verification: {final_count} strategies in database for {tenant.name}")
         
         if final_count != 4:
             print(f"⚠️  WARNING: Expected 4 strategies but found {final_count}")
