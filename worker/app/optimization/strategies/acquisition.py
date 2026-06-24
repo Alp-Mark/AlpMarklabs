@@ -20,22 +20,26 @@ Example:
     # Returns optimal allocation: {"meta": 45%, "google": 55%} with expected lift
 """
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 import numpy as np
-from backend.app.db.models import GoogleAdSpend, MetaAdSpend, ShopifyOrder
+from backend.app.db.models import (
+    FittedModel,
+    GoogleAdSpend,
+    MetaAdSpend,
+    OptimizationRun,
+    ShopifyOrder,
+)
 from scipy.optimize import minimize
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from worker.app.optimization.models.saturation import HillCurve
 from worker.app.optimization.strategies.base import BaseOptimizer
-from worker.app.optimization.utils.monitoring import (
-    log_data_quality_issue,
-    log_model_performance,
-)
+from worker.app.optimization.utils.monitoring import log_data_quality_issue
+from worker.app.optimization.utils.s3_storage import upload_model
 
 
 class BudgetAllocationOptimizer(BaseOptimizer):
@@ -71,6 +75,8 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         self.meta_curve: HillCurve | None = None
         self.google_curve: HillCurve | None = None
         self.current_budget: float | None = None
+        self.tenant_id: UUID | None = None
+        self.optimization_run_id: UUID | None = None
     
     def fetch_training_data(self, tenant_id: UUID, days: int = 90) -> dict[str, Any]:
         """Fetch historical ad spend and conversion data for Meta and Google.
@@ -237,6 +243,9 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         )
         self.current_budget = recent_total_spend / 7  # Average daily budget
         
+        # Store tenant_id for later use in train_models
+        self.tenant_id = tenant_id
+        
         return {
             "meta": {
                 "spend": np.array(meta_spend_list),
@@ -254,6 +263,7 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         
         Fits separate Hill curves to each channel's spend/conversion data.
         Stores curves in self.meta_curve and self.google_curve.
+        Saves fitted models to S3 and creates FittedModel database records.
         
         Raises:
             ValueError: If training data is None or has insufficient points
@@ -261,6 +271,20 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         """
         if self.training_data is None:
             raise ValueError("Must call fetch_training_data before training models")
+        
+        if self.tenant_id is None:
+            raise ValueError("tenant_id not set - must call fetch_training_data first")
+        
+        # Create OptimizationRun record for model tracking
+        optimization_run = OptimizationRun(
+            tenant_id=self.tenant_id,
+            strategy_id=self.strategy_id,
+            run_status="running",
+            started_at=datetime.now(UTC),
+        )
+        self.db.add(optimization_run)
+        self.db.flush()  # Get the ID without committing
+        self.optimization_run_id = optimization_run.id
         
         meta_data = self.training_data["meta"]
         google_data = self.training_data["google"]
@@ -278,8 +302,20 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             )
             meta_params = self.meta_curve.get_params()
             
-            # Log performance (no tenant_id yet - called from base)
-            # log_model_performance will be called later with full context
+            # Calculate R² (coefficient of determination)
+            meta_predictions = self.meta_curve.predict(meta_data["spend"])
+            meta_r2 = self._calculate_r2(
+                actual=meta_data["conversions"],
+                predicted=meta_predictions,
+            )
+            
+            # Save Meta model to S3 and database
+            self._save_fitted_model(
+                curve=self.meta_curve,
+                model_type="meta_saturation_curve",
+                params=meta_params,
+                metrics={"rmse": meta_rmse, "r2": meta_r2},
+            )
         except Exception as e:
             raise RuntimeError(f"Failed to fit Meta Hill curve: {e}") from e
         
@@ -296,8 +332,20 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             )
             google_params = self.google_curve.get_params()
             
-            # Log performance (no tenant_id yet - called from base)
-            # log_model_performance will be called later with full context
+            # Calculate R² (coefficient of determination)
+            google_predictions = self.google_curve.predict(google_data["spend"])
+            google_r2 = self._calculate_r2(
+                actual=google_data["conversions"],
+                predicted=google_predictions,
+            )
+            
+            # Save Google model to S3 and database
+            self._save_fitted_model(
+                curve=self.google_curve,
+                model_type="google_saturation_curve",
+                params=google_params,
+                metrics={"rmse": google_rmse, "r2": google_r2},
+            )
         except Exception as e:
             raise RuntimeError(f"Failed to fit Google Hill curve: {e}") from e
         
@@ -520,3 +568,90 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             "domain": "acquisition",
             "priority": priority,
         }
+    
+    def _calculate_r2(
+        self,
+        actual: np.ndarray,
+        predicted: np.ndarray,
+    ) -> float:
+        """Calculate R² (coefficient of determination) for model fit.
+        
+        R² represents the proportion of variance in the dependent variable
+        that is predictable from the independent variable. Ranges from 0 to 1,
+        where 1 indicates perfect fit.
+        
+        Args:
+            actual: Actual observed values
+            predicted: Model predicted values
+        
+        Returns:
+            R² score (0.0 to 1.0, or negative for very poor fits)
+        """
+        # Total sum of squares (variance in actual data)
+        ss_tot = np.sum((actual - np.mean(actual)) ** 2)
+        
+        # Residual sum of squares (unexplained variance)
+        ss_res = np.sum((actual - predicted) ** 2)
+        
+        # R² = 1 - (unexplained variance / total variance)
+        if ss_tot == 0:
+            return 0.0
+        
+        r2 = 1.0 - (ss_res / ss_tot)
+        return float(r2)
+    
+    def _save_fitted_model(
+        self,
+        curve: HillCurve,
+        model_type: str,
+        params: dict[str, float],
+        metrics: dict[str, float],
+    ) -> None:
+        """Save fitted model to S3 and create database record.
+        
+        Args:
+            curve: Fitted HillCurve instance to save
+            model_type: Type identifier (e.g., "meta_saturation_curve")
+            params: Model parameters from get_params()
+            metrics: Training metrics (rmse, r2, etc.)
+        
+        Raises:
+            RuntimeError: If S3 upload or database insert fails
+        """
+        if self.tenant_id is None:
+            raise RuntimeError("tenant_id not set")
+        
+        if self.optimization_run_id is None:
+            raise RuntimeError("optimization_run_id not set")
+        
+        # Generate S3 key with timestamp
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        s3_key = f"{self.tenant_id}/{model_type}_{timestamp}.pkl"
+        
+        # Upload pickled model to S3
+        try:
+            upload_model(model_obj=curve, s3_key=s3_key)
+        except Exception as e:
+            raise RuntimeError(f"Failed to upload model to S3: {e}") from e
+        
+        # Create database record
+        try:
+            fitted_model = FittedModel(
+                tenant_id=self.tenant_id,
+                strategy_id=self.strategy_id,
+                optimization_run_id=self.optimization_run_id,
+                model_type=model_type,
+                s3_key=s3_key,
+                trained_at=datetime.now(UTC),
+                model_metadata={
+                    "params": params,
+                    "training_date": datetime.now(UTC).isoformat(),
+                },
+                accuracy_metrics=metrics,
+            )
+            self.db.add(fitted_model)
+            self.db.commit()
+        except Exception as e:
+            # Rollback on database error
+            self.db.rollback()
+            raise RuntimeError(f"Failed to save fitted model to database: {e}") from e

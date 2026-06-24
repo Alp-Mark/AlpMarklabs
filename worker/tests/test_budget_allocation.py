@@ -104,12 +104,22 @@ class TestFetchTrainingData:
 class TestTrainModels:
     """Test Hill curve model training."""
     
-    def test_train_models_success(self) -> None:
+    @patch("worker.app.optimization.strategies.acquisition.upload_model")
+    def test_train_models_success(self, mock_upload: Any) -> None:
         """Train models successfully on valid data."""
         strategy_id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
         db = MagicMock()
         
+        # Mock db.add to set id on OptimizationRun when flushed
+        def mock_add_side_effect(obj: Any) -> None:
+            if hasattr(obj, "id") and obj.id is None:
+                obj.id = uuid.uuid4()
+        
+        db.add.side_effect = mock_add_side_effect
+        
         optimizer = BudgetAllocationOptimizer(strategy_id=strategy_id, db=db)
+        optimizer.tenant_id = tenant_id
         
         # Set mock training data
         optimizer.training_data = {
@@ -307,10 +317,18 @@ class TestGenerateRecommendation:
 class TestEndToEndWorkflow:
     """Test complete optimization workflow."""
     
-    def test_run_end_to_end_with_mock_data(self) -> None:
+    @patch("worker.app.optimization.strategies.acquisition.upload_model")
+    def test_run_end_to_end_with_mock_data(self, mock_upload: Any) -> None:
         """Run complete workflow from fetch to recommendation."""
         strategy_id = uuid.uuid4()
         db = MagicMock()
+        
+        # Mock db.add to set id on OptimizationRun
+        def mock_add_side_effect(obj: Any) -> None:
+            if hasattr(obj, "id") and obj.id is None:
+                obj.id = uuid.uuid4()
+        
+        db.add.side_effect = mock_add_side_effect
         
         # Mock database with synthetic data
         today = date.today()
@@ -347,6 +365,7 @@ class TestEndToEndWorkflow:
         
         # Run full workflow
         optimizer = BudgetAllocationOptimizer(strategy_id=strategy_id, db=db)
+        optimizer.tenant_id = uuid.uuid4()  # Set tenant_id for model saving
         
         # Use run() method from BaseOptimizer
         with patch("worker.app.optimization.strategies.acquisition.select"):
@@ -429,3 +448,171 @@ class TestConstraintValidation:
         assert result["meta_pct"] <= 60.0
         # Google should get at least 15%
         assert result["google_pct"] >= 15.0
+
+
+class TestModelPersistence:
+    """Test saving fitted models to S3 and database."""
+    
+    def test_calculate_r2_perfect_fit(self) -> None:
+        """R² calculation returns 1.0 for perfect fit."""
+        strategy_id = uuid.uuid4()
+        db = MagicMock()
+        
+        optimizer = BudgetAllocationOptimizer(strategy_id=strategy_id, db=db)
+        
+        actual = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        predicted = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        
+        r2 = optimizer._calculate_r2(actual=actual, predicted=predicted)
+        
+        assert abs(r2 - 1.0) < 0.01  # Should be very close to 1.0
+    
+    def test_calculate_r2_poor_fit(self) -> None:
+        """R² calculation returns low value for poor fit."""
+        strategy_id = uuid.uuid4()
+        db = MagicMock()
+        
+        optimizer = BudgetAllocationOptimizer(strategy_id=strategy_id, db=db)
+        
+        actual = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        predicted = np.array([5.0, 4.0, 3.0, 2.0, 1.0])  # Opposite pattern
+        
+        r2 = optimizer._calculate_r2(actual=actual, predicted=predicted)
+        
+        assert r2 < 0.5  # Should be low for poor fit
+    
+    @patch("worker.app.optimization.strategies.acquisition.upload_model")
+    def test_save_fitted_model_creates_db_record(
+        self, mock_upload: Any
+    ) -> None:
+        """Saving fitted model creates FittedModel database record."""
+        tenant_id = uuid.uuid4()
+        strategy_id = uuid.uuid4()
+        run_id = uuid.uuid4()
+        db = MagicMock()
+        
+        optimizer = BudgetAllocationOptimizer(strategy_id=strategy_id, db=db)
+        optimizer.tenant_id = tenant_id
+        optimizer.optimization_run_id = run_id  # Set run_id directly
+        
+        # Create a simple fitted curve
+        from worker.app.optimization.models.saturation import HillCurve
+        
+        curve = HillCurve()
+        curve.fit(
+            spend_data=np.array([1000, 2000, 3000]),
+            conversion_data=np.array([40, 70, 85]),
+        )
+        
+        params = curve.get_params()
+        metrics = {"rmse": 5.2, "r2": 0.95}
+        
+        optimizer._save_fitted_model(
+            curve=curve,
+            model_type="meta_saturation_curve",
+            params=params,
+            metrics=metrics,
+        )
+        
+        # Verify upload_model was called
+        assert mock_upload.called
+        call_args = mock_upload.call_args
+        assert call_args[1]["model_obj"] == curve
+        assert str(tenant_id) in call_args[1]["s3_key"]
+        assert "meta_saturation_curve" in call_args[1]["s3_key"]
+        
+        # Verify db.add was called with FittedModel
+        assert db.add.called
+        fitted_model = db.add.call_args_list[-1][0][0]  # Last call
+        assert fitted_model.tenant_id == tenant_id
+        assert fitted_model.strategy_id == strategy_id
+        assert fitted_model.optimization_run_id == run_id
+        assert fitted_model.model_type == "meta_saturation_curve"
+        assert fitted_model.accuracy_metrics == metrics
+        assert "params" in fitted_model.model_metadata
+        
+        # Verify commit was called
+        assert db.commit.called
+    
+    @patch("worker.app.optimization.strategies.acquisition.upload_model")
+    def test_save_fitted_model_rollback_on_db_error(
+        self, mock_upload: Any
+    ) -> None:
+        """Database error triggers rollback."""
+        tenant_id = uuid.uuid4()
+        strategy_id = uuid.uuid4()
+        run_id = uuid.uuid4()
+        db = MagicMock()
+        
+        # Make commit raise an error
+        db.commit.side_effect = RuntimeError("Database error")
+        
+        optimizer = BudgetAllocationOptimizer(strategy_id=strategy_id, db=db)
+        optimizer.tenant_id = tenant_id
+        optimizer.optimization_run_id = run_id  # Set run_id directly
+        
+        from worker.app.optimization.models.saturation import HillCurve
+        
+        curve = HillCurve()
+        curve.fit(
+            spend_data=np.array([1000, 2000, 3000]),
+            conversion_data=np.array([40, 70, 85]),
+        )
+        
+        with pytest.raises(RuntimeError, match="Failed to save fitted model"):
+            optimizer._save_fitted_model(
+                curve=curve,
+                model_type="test_curve",
+                params=curve.get_params(),
+                metrics={"rmse": 5.0, "r2": 0.9},
+            )
+        
+        # Verify rollback was called
+        assert db.rollback.called
+    
+    @patch("worker.app.optimization.strategies.acquisition.upload_model")
+    def test_train_models_saves_both_curves(self, mock_upload: Any) -> None:
+        """Training models saves both Meta and Google curves to S3."""
+        tenant_id = uuid.uuid4()
+        strategy_id = uuid.uuid4()
+        db = MagicMock()
+        
+        # Mock db.add to set id on OptimizationRun
+        def mock_add_side_effect(obj: Any) -> None:
+            if hasattr(obj, "id") and obj.id is None:
+                obj.id = uuid.uuid4()
+        
+        db.add.side_effect = mock_add_side_effect
+        
+        optimizer = BudgetAllocationOptimizer(strategy_id=strategy_id, db=db)
+        optimizer.tenant_id = tenant_id
+        optimizer.training_data = {
+            "meta": {
+                "spend": np.array([1000, 2000, 3000, 4000, 5000]),
+                "conversions": np.array([40, 70, 85, 92, 96]),
+            },
+            "google": {
+                "spend": np.array([800, 1600, 2400, 3200, 4000]),
+                "conversions": np.array([35, 60, 75, 83, 88]),
+            },
+            "total_budget": 10000.0,
+        }
+        
+        optimizer.train_models()
+        
+        # Verify upload_model was called twice (Meta + Google)
+        assert mock_upload.call_count == 2
+        
+        # Verify db.add was called (OptimizationRun + 2 FittedModels = 3)
+        assert db.add.call_count >= 3
+        
+        # Verify db.commit was called twice (once per model save)
+        assert db.commit.call_count == 2
+        
+        # Check S3 keys contain correct model types
+        s3_keys = [call[1]["s3_key"] for call in mock_upload.call_args_list]
+        assert any("meta_saturation_curve" in key for key in s3_keys)
+        assert any("google_saturation_curve" in key for key in s3_keys)
+        
+        # Verify tenant_id is in S3 keys
+        assert all(str(tenant_id) in key for key in s3_keys)
