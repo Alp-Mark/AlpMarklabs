@@ -42,8 +42,8 @@ from backend.app.db.models import OptimizationStrategy, Tenant  # noqa: E402
 from backend.app.db.session import SessionLocal  # noqa: E402
 from sqlalchemy import delete, func, select  # noqa: E402
 
-# Tenant slug to look up (works in both local and production)
-TENANT_SLUG = "one8"
+# Tenant slugs to try (production uses "18", local development uses "one8")
+TENANT_SLUGS = ["18", "one8"]
 
 
 def seed_optimization_strategies() -> None:
@@ -51,10 +51,15 @@ def seed_optimization_strategies() -> None:
     db = SessionLocal()
     
     try:
-        # Look up One8 tenant by slug
-        tenant = db.scalar(select(Tenant).where(Tenant.slug == TENANT_SLUG))
+        # Look up tenant by slug (try production then local)
+        tenant = None
+        for slug in TENANT_SLUGS:
+            tenant = db.scalar(select(Tenant).where(Tenant.slug == slug))
+            if tenant:
+                break
+        
         if not tenant:
-            print(f"❌ Tenant with slug '{TENANT_SLUG}' not found")
+            print(f"❌ Tenant with slug in {TENANT_SLUGS} not found")
             print("   Available tenants:")
             for t in db.scalars(select(Tenant).order_by(Tenant.created_at)):
                 print(f"   - {t.slug} (ID: {t.id})")
