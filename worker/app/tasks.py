@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from time import sleep
 from typing import Any
 
+import sentry_sdk
 from backend.app.db.models import (
     AcquisitionMetricsSnapshot,
     AuditEvent,
@@ -21,6 +24,7 @@ from backend.app.db.models import (
     MarginDriftThreshold,
     MetaAdSpend,
     OperationalImpactSnapshot,
+    OptimizationStrategy,
     Recommendation,
     RetentionDailySnapshot,
     SegmentMarginSnapshot,
@@ -37,8 +41,18 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from worker.app.celery_app import celery_app
+from worker.app.optimization.strategies.acquisition import (
+    BudgetAllocationOptimizer,
+)
+from worker.app.optimization.utils.monitoring import (
+    log_optimization_failure,
+    log_optimization_start,
+    log_optimization_success,
+)
 from worker.app.rules.engine import Rule, RuleEngine, RuleInput
 from worker.app.rules.pack import get_rules
+
+logger = logging.getLogger(__name__)
 
 SYNC_RETRY_MAX_ATTEMPTS = 3
 SYNC_RETRY_BASE_BACKOFF_SECONDS = 5.0
@@ -3788,5 +3802,186 @@ def run_analysis_view_exports_schedule() -> dict[str, Any]:
     Optional daily task to export and email saved analysis views
     (FR-034 / T-064).
     """
-    return run_analysis_view_exports_job()
+    return run_optimization_shadow_mode_job()
+
+
+def run_optimization_shadow_mode_job(
+    *,
+    session_factory: sessionmaker[Session] = SessionLocal,
+) -> dict[str, Any]:
+    """
+    Run optimization shadow mode for all active tenants.
+    
+    Shadow mode executes the optimizer workflow (fetch data, train models,
+    optimize) and logs results to OptimizationRun database records, but does
+    NOT create user-facing Recommendation records. This allows testing and
+    validation of optimization logic in production without impacting users.
+    
+    Only runs if OPTIMIZATION_SHADOW_MODE environment variable is set to "true".
+    
+    Returns:
+        Dict with run statistics: tenants_processed, successful_runs, failed_runs
+    """
+    # Check if shadow mode is enabled
+    if os.getenv("OPTIMIZATION_SHADOW_MODE") != "true":
+        logger.info("Shadow mode not enabled - skipping optimization run")
+        return {
+            "shadow_mode_enabled": False,
+            "tenants_processed": 0,
+            "successful_runs": 0,
+            "failed_runs": 0,
+        }
+    
+    db = session_factory()
+    tenants_processed = 0
+    successful_runs = 0
+    failed_runs = 0
+    
+    try:
+        # Query all active tenants
+        tenants = list(
+            db.scalars(
+                select(Tenant).where(Tenant.is_active == True)  # noqa: E712
+            )
+        )
+        
+        logger.info(f"Shadow mode: Processing {len(tenants)} active tenants")
+        
+        for tenant in tenants:
+            tenants_processed += 1
+            
+            # Find enabled optimization strategies for this tenant
+            strategies = list(
+                db.scalars(
+                    select(OptimizationStrategy)
+                    .where(OptimizationStrategy.tenant_id == tenant.id)
+                    .where(OptimizationStrategy.is_enabled == True)  # noqa: E712
+                )
+            )
+            
+            if not strategies:
+                logger.debug(
+                    f"Shadow mode: No enabled strategies for tenant {tenant.slug}"
+                )
+                continue
+            
+            for strategy in strategies:
+                try:
+                    # Log start of optimization
+                    log_optimization_start(
+                        tenant_id=tenant.id,
+                        strategy_name=strategy.strategy_name,
+                        domain=strategy.domain,
+                        config=strategy.config,
+                    )
+                    
+                    # Create optimizer based on strategy type
+                    if strategy.strategy_type == "budget_allocation":
+                        optimizer = BudgetAllocationOptimizer(
+                            strategy_id=strategy.id,
+                            db=db,
+                        )
+                        
+                        # Run optimization workflow (fetch, train, optimize, generate)
+                        # This creates OptimizationRun and FittedModel records
+                        result = optimizer.run(
+                            tenant_id=tenant.id,
+                            days=strategy.config.get("lookback_days", 90),
+                        )
+                        
+                        # Log success (run_id will be set after train_models)
+                        if optimizer.optimization_run_id:
+                            log_optimization_success(
+                                run_id=optimizer.optimization_run_id,
+                                tenant_id=tenant.id,
+                                strategy_name=strategy.strategy_name,
+                                metrics={
+                                    "expected_conversions": result.get(
+                                        "expected_impact", {}
+                                    ).get("expected_daily_conversions"),
+                                    "lift_pct": result.get("expected_impact", {}).get(
+                                        "conversions_lift_pct"
+                                    ),
+                                    "confidence": result.get("confidence_level"),
+                                },
+                            )
+                        
+                        lift_pct = result.get("expected_impact", {}).get(
+                            "conversions_lift_pct", 0
+                        )
+                        logger.info(
+                            f"Shadow mode success: {tenant.slug} / "
+                            f"{strategy.strategy_name} - lift={lift_pct:.1f}%"
+                        )
+                        successful_runs += 1
+                    
+                    else:
+                        logger.warning(
+                            f"Shadow mode: Unknown strategy type "
+                            f"'{strategy.strategy_type}' for tenant {tenant.slug}"
+                        )
+                
+                except Exception as e:
+                    failed_runs += 1
+                    
+                    # Log failure (check if optimizer exists and has run_id)
+                    run_id = None
+                    if "optimizer" in locals() and hasattr(
+                        optimizer, "optimization_run_id"
+                    ):
+                        run_id = optimizer.optimization_run_id
+                    
+                    if run_id:
+                        log_optimization_failure(
+                            run_id=run_id,
+                            error=e,
+                            tenant_id=tenant.id,
+                            strategy_name=strategy.strategy_name,
+                            context={
+                                "tenant_slug": tenant.slug,
+                                "strategy_id": str(strategy.id),
+                                "domain": strategy.domain,
+                            },
+                        )
+                    
+                    logger.error(
+                        f"Shadow mode failed: {tenant.slug} / "
+                        f"{strategy.strategy_name} - {e}"
+                    )
+                    
+                    # Capture exception in Sentry
+                    sentry_sdk.capture_exception(e)
+        
+        logger.info(
+            f"Shadow mode complete: {tenants_processed} tenants, "
+            f"{successful_runs} successful, {failed_runs} failed"
+        )
+        
+        return {
+            "shadow_mode_enabled": True,
+            "tenants_processed": tenants_processed,
+            "successful_runs": successful_runs,
+            "failed_runs": failed_runs,
+        }
+    
+    finally:
+        db.close()
+
+
+@celery_app.task(name="worker.app.tasks.run_optimization_shadow_mode_schedule")
+def run_optimization_shadow_mode_schedule() -> dict[str, Any]:
+    """
+    Scheduled task to run optimization in shadow mode.
+    
+    Shadow mode runs the full optimization workflow and logs results to the
+    database, but does NOT create user-facing recommendations. This allows
+    testing optimization logic in production.
+    
+    Environment:
+        OPTIMIZATION_SHADOW_MODE: Set to "true" to enable shadow mode runs
+    
+    Returns:
+        Dict with execution statistics
+    """
+    return run_optimization_shadow_mode_job()
 
