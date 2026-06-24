@@ -241,6 +241,103 @@ class TestOptimize:
             optimizer.optimize()
 
 
+class TestOptimizationRunLogging:
+    """Test OptimizationRun database logging during optimization."""
+    
+    def test_optimize_updates_run_success(self) -> None:
+        """Successful optimization updates OptimizationRun with success status."""
+        from datetime import UTC, datetime
+        
+        strategy_id = uuid.uuid4()
+        run_id = uuid.uuid4()
+        db = MagicMock()
+        
+        # Create mock OptimizationRun
+        mock_run = MagicMock()
+        mock_run.started_at = datetime.now(UTC)
+        db.get.return_value = mock_run
+        
+        optimizer = BudgetAllocationOptimizer(strategy_id=strategy_id, db=db)
+        optimizer.optimization_run_id = run_id
+        optimizer.current_budget = 10000.0
+        optimizer.training_data = {
+            "meta": {
+                "spend": np.array([1000.0, 2000.0, 3000.0, 4000.0, 5000.0]),
+                "conversions": np.array([40.0, 70.0, 85.0, 92.0, 96.0]),
+            },
+            "google": {
+                "spend": np.array([800.0, 1600.0, 2400.0, 3200.0, 4000.0]),
+                "conversions": np.array([35.0, 60.0, 75.0, 83.0, 88.0]),
+            },
+            "total_budget": 10000.0,
+        }
+        
+        # Create fitted curves
+        from worker.app.optimization.models.saturation import HillCurve
+        
+        optimizer.meta_curve = HillCurve()
+        optimizer.meta_curve.fit(
+            spend_data=optimizer.training_data["meta"]["spend"],
+            conversion_data=optimizer.training_data["meta"]["conversions"],
+        )
+        
+        optimizer.google_curve = HillCurve()
+        optimizer.google_curve.fit(
+            spend_data=optimizer.training_data["google"]["spend"],
+            conversion_data=optimizer.training_data["google"]["conversions"],
+        )
+        
+        # Run optimization
+        result = optimizer.optimize()
+        
+        # Verify db.get was called to fetch OptimizationRun
+        db.get.assert_called_once()
+        
+        # Verify OptimizationRun was updated with success status
+        assert mock_run.run_status == "success"
+        assert mock_run.completed_at is not None
+        assert mock_run.optimization_result == result
+        assert mock_run.execution_time_seconds is not None
+        assert mock_run.execution_time_seconds > 0
+        assert mock_run.input_snapshot_ids is not None
+        assert len(mock_run.input_snapshot_ids) == 1
+        assert "total_budget" in mock_run.input_snapshot_ids[0]
+        
+        # Verify db.commit was called
+        db.commit.assert_called()
+    
+    def test_optimize_updates_run_failure(self) -> None:
+        """Failed optimization updates OptimizationRun with failed status."""
+        from datetime import UTC, datetime
+        
+        strategy_id = uuid.uuid4()
+        run_id = uuid.uuid4()
+        db = MagicMock()
+        
+        # Create mock OptimizationRun
+        mock_run = MagicMock()
+        mock_run.started_at = datetime.now(UTC)
+        db.get.return_value = mock_run
+        
+        optimizer = BudgetAllocationOptimizer(strategy_id=strategy_id, db=db)
+        optimizer.optimization_run_id = run_id
+        # Don't train models - will cause RuntimeError
+        
+        # Attempt optimization (should fail)
+        with pytest.raises(RuntimeError, match="Must train models"):
+            optimizer.optimize()
+        
+        # Verify OptimizationRun was updated with failed status
+        assert mock_run.run_status == "failed"
+        assert mock_run.completed_at is not None
+        assert mock_run.error_message is not None
+        assert "Must train models" in mock_run.error_message
+        assert mock_run.execution_time_seconds is not None
+        
+        # Verify db.commit was called
+        db.commit.assert_called()
+
+
 class TestGenerateRecommendation:
     """Test recommendation generation."""
     

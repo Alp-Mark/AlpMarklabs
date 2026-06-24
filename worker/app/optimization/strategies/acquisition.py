@@ -77,6 +77,7 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         self.current_budget: float | None = None
         self.tenant_id: UUID | None = None
         self.optimization_run_id: UUID | None = None
+        self.optimization_result: dict[str, Any] | None = None
     
     def fetch_training_data(self, tenant_id: UUID, days: int = 90) -> dict[str, Any]:
         """Fetch historical ad spend and conversion data for Meta and Google.
@@ -379,103 +380,164 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         Raises:
             RuntimeError: If models are not trained or optimization fails
         """
-        if self.meta_curve is None or self.google_curve is None:
-            raise RuntimeError("Must train models before optimizing")
-        
-        if self.current_budget is None or self.current_budget <= 0:
-            raise RuntimeError("Invalid current budget")
-        
-        # Objective function: maximize total conversions (minimize negative)
-        def objective(spend_allocation: np.ndarray) -> float:
-            """Objective function: negative total conversions (for minimization)."""
-            assert self.meta_curve is not None
-            assert self.google_curve is not None
-            meta_spend, google_spend = spend_allocation
-            meta_conv = self.meta_curve.predict(meta_spend)[0]
-            google_conv = self.google_curve.predict(google_spend)[0]
-            total_conv = meta_conv + google_conv
-            return -total_conv  # Negative because we minimize
-        
-        # Constraints
-        constraints = [
-            # Total spend equals current budget
-            {
-                "type": "eq",
-                "fun": lambda x: x[0] + x[1] - self.current_budget,
-            },
-        ]
-        
-        # Bounds: 15% to 60% of budget per channel
-        bounds = [
-            (0.15 * self.current_budget, 0.60 * self.current_budget),  # Meta
-            (0.15 * self.current_budget, 0.60 * self.current_budget),  # Google
-        ]
-        
-        # Initial guess: current allocation (proportional to recent spend)
-        meta_data = self.training_data["meta"]
-        google_data = self.training_data["google"]
-        current_meta = float(np.mean(meta_data["spend"][-7:]))
-        current_google = float(np.mean(google_data["spend"][-7:]))
-        current_total = current_meta + current_google
-        
-        if current_total > 0:
-            initial_meta = self.current_budget * (current_meta / current_total)
-            initial_google = self.current_budget * (current_google / current_total)
-        else:
-            # Fallback: 50/50 split
-            initial_meta = self.current_budget * 0.5
-            initial_google = self.current_budget * 0.5
-        
-        initial_guess = np.array([initial_meta, initial_google])
-        
-        # Run optimization
         try:
-            result = minimize(
-                fun=objective,
-                x0=initial_guess,
-                method="SLSQP",
-                bounds=bounds,
-                constraints=constraints,
-                options={"maxiter": 100, "ftol": 1e-6},
+            if self.meta_curve is None or self.google_curve is None:
+                raise RuntimeError("Must train models before optimizing")
+            
+            if self.current_budget is None or self.current_budget <= 0:
+                raise RuntimeError("Invalid current budget")
+            
+            # Objective function: maximize total conversions (minimize negative)
+            def objective(spend_allocation: np.ndarray) -> float:
+                """Objective function: negative total conversions (for minimization)."""
+                assert self.meta_curve is not None
+                assert self.google_curve is not None
+                meta_spend, google_spend = spend_allocation
+                meta_conv = self.meta_curve.predict(meta_spend)[0]
+                google_conv = self.google_curve.predict(google_spend)[0]
+                total_conv = meta_conv + google_conv
+                return -total_conv  # Negative because we minimize
+            
+            # Constraints
+            constraints = [
+                # Total spend equals current budget
+                {
+                    "type": "eq",
+                    "fun": lambda x: x[0] + x[1] - self.current_budget,
+                },
+            ]
+            
+            # Bounds: 15% to 60% of budget per channel
+            bounds = [
+                (0.15 * self.current_budget, 0.60 * self.current_budget),  # Meta
+                (0.15 * self.current_budget, 0.60 * self.current_budget),  # Google
+            ]
+            
+            # Initial guess: current allocation (proportional to recent spend)
+            meta_data = self.training_data["meta"]
+            google_data = self.training_data["google"]
+            current_meta = float(np.mean(meta_data["spend"][-7:]))
+            current_google = float(np.mean(google_data["spend"][-7:]))
+            current_total = current_meta + current_google
+            
+            if current_total > 0:
+                initial_meta = self.current_budget * (current_meta / current_total)
+                initial_google = self.current_budget * (current_google / current_total)
+            else:
+                # Fallback: 50/50 split
+                initial_meta = self.current_budget * 0.5
+                initial_google = self.current_budget * 0.5
+            
+            initial_guess = np.array([initial_meta, initial_google])
+            
+            # Run optimization
+            try:
+                result = minimize(
+                    fun=objective,
+                    x0=initial_guess,
+                    method="SLSQP",
+                    bounds=bounds,
+                    constraints=constraints,
+                    options={"maxiter": 100, "ftol": 1e-6},
+                )
+                
+                if not result.success:
+                    raise RuntimeError(
+                        f"Optimization failed to converge: {result.message}"
+                    )
+                
+            except Exception as e:
+                raise RuntimeError(f"Optimization error: {e}") from e
+            
+            # Extract optimal allocation
+            optimal_meta, optimal_google = result.x
+            
+            # Calculate expected conversions
+            expected_meta_conv = self.meta_curve.predict(optimal_meta)[0]
+            expected_google_conv = self.google_curve.predict(optimal_google)[0]
+            expected_total_conv = expected_meta_conv + expected_google_conv
+            
+            # Calculate current baseline conversions
+            current_meta_conv = self.meta_curve.predict(current_meta)[0]
+            current_google_conv = self.google_curve.predict(current_google)[0]
+            current_total_conv = current_meta_conv + current_google_conv
+            
+            # Calculate lift
+            lift_pct = (
+                ((expected_total_conv - current_total_conv) / current_total_conv * 100)
+                if current_total_conv > 0
+                else 0.0
             )
             
-            if not result.success:
-                raise RuntimeError(
-                    f"Optimization failed to converge: {result.message}"
-                )
+            # Build optimization result
+            result = {
+                "meta_spend": float(optimal_meta),
+                "google_spend": float(optimal_google),
+                "meta_pct": float(optimal_meta / self.current_budget * 100),
+                "google_pct": float(optimal_google / self.current_budget * 100),
+                "expected_conversions": float(expected_total_conv),
+                "current_conversions": float(current_total_conv),
+                "lift_pct": float(lift_pct),
+            }
             
+            # Store result in instance variable
+            self.optimization_result = result
+            
+            # Update OptimizationRun record in database
+            if self.optimization_run_id is not None:
+                optimization_run = self.db.get(
+                    OptimizationRun, self.optimization_run_id
+                )
+                if optimization_run:
+                    optimization_run.run_status = "success"
+                    optimization_run.completed_at = datetime.now(UTC)
+                    optimization_run.optimization_result = result
+                    
+                    # Calculate execution time
+                    if optimization_run.started_at:
+                        execution_time = (
+                            optimization_run.completed_at - optimization_run.started_at
+                        ).total_seconds()
+                        optimization_run.execution_time_seconds = execution_time
+                    
+                    # Store input snapshot metadata
+                    optimization_run.input_snapshot_ids = [
+                        {
+                            "current_meta_spend": float(current_meta),
+                            "current_google_spend": float(current_google),
+                            "lookback_days": len(meta_data["spend"]),
+                            "total_budget": float(self.current_budget),
+                        }
+                    ]
+                    
+                    self.db.commit()
+            
+            return result
+        
         except Exception as e:
-            raise RuntimeError(f"Optimization error: {e}") from e
-        
-        # Extract optimal allocation
-        optimal_meta, optimal_google = result.x
-        
-        # Calculate expected conversions
-        expected_meta_conv = self.meta_curve.predict(optimal_meta)[0]
-        expected_google_conv = self.google_curve.predict(optimal_google)[0]
-        expected_total_conv = expected_meta_conv + expected_google_conv
-        
-        # Calculate current baseline conversions
-        current_meta_conv = self.meta_curve.predict(current_meta)[0]
-        current_google_conv = self.google_curve.predict(current_google)[0]
-        current_total_conv = current_meta_conv + current_google_conv
-        
-        # Calculate lift
-        lift_pct = (
-            ((expected_total_conv - current_total_conv) / current_total_conv * 100)
-            if current_total_conv > 0
-            else 0.0
-        )
-        
-        return {
-            "meta_spend": float(optimal_meta),
-            "google_spend": float(optimal_google),
-            "meta_pct": float(optimal_meta / self.current_budget * 100),
-            "google_pct": float(optimal_google / self.current_budget * 100),
-            "expected_conversions": float(expected_total_conv),
-            "current_conversions": float(current_total_conv),
-            "lift_pct": float(lift_pct),
-        }
+            # Mark optimization run as failed
+            if self.optimization_run_id is not None:
+                optimization_run = self.db.get(
+                    OptimizationRun, self.optimization_run_id
+                )
+                if optimization_run:
+                    optimization_run.run_status = "failed"
+                    optimization_run.completed_at = datetime.now(UTC)
+                    # Truncate to field limit
+                    optimization_run.error_message = str(e)[:1000]
+                    
+                    # Calculate execution time even for failures
+                    if optimization_run.started_at:
+                        execution_time = (
+                            optimization_run.completed_at - optimization_run.started_at
+                        ).total_seconds()
+                        optimization_run.execution_time_seconds = execution_time
+                    
+                    self.db.commit()
+            
+            # Re-raise the exception
+            raise
+
     
     def generate_recommendation(self) -> dict[str, Any]:
         """Generate recommendation payload from optimization result.
