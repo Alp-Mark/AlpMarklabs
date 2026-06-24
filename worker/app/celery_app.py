@@ -15,8 +15,9 @@ SYSTEM_SYNC_CADENCE = {
     "finance-cost-drift-schedule": timedelta(hours=4),  # Every 4 hours
     "inventory-risk-schedule": timedelta(hours=4),  # Every 4 hours
     "operational-impact-schedule": timedelta(hours=4),  # Every 4 hours
-    "rule-engine-schedule": timedelta(hours=1),  # Every 1 hour - FAST decision intelligence
+    "rule-engine-schedule": timedelta(hours=1),  # Every 1 hour
     "threshold-suggestion-schedule": timedelta(days=7),
+    "run-optimization-shadow-mode": timedelta(hours=6),  # Every 6 hours
 }
 
 SOURCE_SYNC_CADENCE = {
@@ -100,6 +101,10 @@ celery_app.conf.update(
         "google-spend-sync-schedule": {
             "task": "worker.app.tasks.run_google_spend_sync_schedule",
             "schedule": SOURCE_SYNC_CADENCE["google-spend-sync-schedule"],
+        },
+        "run-optimization-shadow-mode": {
+            "task": "worker.app.tasks.run_optimization_shadow_mode_schedule",
+            "schedule": SYSTEM_SYNC_CADENCE["run-optimization-shadow-mode"],
         },
     },
 )
