@@ -13,6 +13,7 @@ from backend.app.db.models import (
     ConnectorIntegration,
     GoogleAdSpend,
     MetaAdSpend,
+    Recommendation,
     ShopifyOrder,
 )
 from backend.app.schemas.executive import (
@@ -314,7 +315,7 @@ def calculate_executive_overview(
     """)
     
     real_cogs = db.scalar(cogs_query, {
-        "tenant_id": tenant_id,
+        "tenant_id": str(tenant_id),
         "start": period_start,
         "end": period_end
     }) or 0.0
@@ -447,8 +448,14 @@ def calculate_executive_overview(
 
     # Team performance summaries
     team_performance = _calculate_team_performance(
+        db=db,
+        tenant_id=tenant_id,
         blended_roas=blended_roas,
         contribution_margin_pct=contribution_margin_pct,
+        repeat_purchase_rate=repeat_purchase_rate,
+        return_rate_pct=return_rate_pct,
+        cac_payback_days=cac_payback_days,
+        comp=comp,
     )
 
     return ExecutiveOverviewResponse(
@@ -645,65 +652,127 @@ def _calculate_health_indicators(
 
 
 def _calculate_team_performance(
+    db: Session,
+    tenant_id: UUID,
     blended_roas: float | None,
     contribution_margin_pct: float,
+    repeat_purchase_rate: float | None,
+    return_rate_pct: float | None,
+    cac_payback_days: float | None,
+    comp: dict[str, Any],
 ) -> list[TeamPerformanceSummary]:
-    """Calculate team performance summaries (placeholder implementation)."""
+    """Calculate team performance summaries with real metrics and trends."""
     teams: list[TeamPerformanceSummary] = []
 
+    # Helper to determine trend
+    def _trend(current: float | None, previous: float | None) -> str:
+        if current is None or previous is None or previous == 0:
+            return "stable"
+        change_pct = ((current - previous) / previous) * 100.0
+        if change_pct > 5.0:
+            return "improving"
+        elif change_pct < -5.0:
+            return "declining"
+        else:
+            return "stable"
+
+    # Query recommendation counts by domain
+    growth_recs = db.scalar(
+        select(func.count(Recommendation.id))
+        .where(Recommendation.tenant_id == tenant_id)
+        .where(Recommendation.domain == "growth")
+        .where(Recommendation.status.in_(["new", "reviewed"]))
+    ) or 0
+
+    retention_recs = db.scalar(
+        select(func.count(Recommendation.id))
+        .where(Recommendation.tenant_id == tenant_id)
+        .where(Recommendation.domain == "retention")
+        .where(Recommendation.status.in_(["new", "reviewed"]))
+    ) or 0
+
+    finance_recs = db.scalar(
+        select(func.count(Recommendation.id))
+        .where(Recommendation.tenant_id == tenant_id)
+        .where(Recommendation.domain == "finance")
+        .where(Recommendation.status.in_(["new", "reviewed"]))
+    ) or 0
+
+    operations_recs = db.scalar(
+        select(func.count(Recommendation.id))
+        .where(Recommendation.tenant_id == tenant_id)
+        .where(Recommendation.domain == "operations")
+        .where(Recommendation.status.in_(["new", "reviewed"]))
+    ) or 0
+
     # Growth team
+    growth_trend = _trend(blended_roas, comp.get("blended_roas"))
     teams.append(
         TeamPerformanceSummary(
             team="growth",
             key_metrics={
                 "blended_roas": blended_roas,
-                "cac_payback_days": None,
+                "cac_payback_days": cac_payback_days,
             },
-            trend="stable",
-            alert_count=0,
-            recommendation_count=0,
+            trend=growth_trend,
+            alert_count=0,  # TODO: Implement alert counting when alert system is built
+            recommendation_count=growth_recs,
         )
     )
 
     # Retention team
+    retention_trend = _trend(
+        repeat_purchase_rate, comp.get("repeat_purchase_rate")
+    )
     teams.append(
         TeamPerformanceSummary(
             team="retention",
             key_metrics={
-                "repeat_purchase_rate": None,
-                "ltv": None,
+                "repeat_purchase_rate": repeat_purchase_rate,
             },
-            trend="stable",
-            alert_count=0,
-            recommendation_count=0,
+            trend=retention_trend,
+            alert_count=0,  # TODO: Implement alert counting
+            recommendation_count=retention_recs,
         )
     )
 
     # Finance team
+    finance_trend = _trend(
+        contribution_margin_pct, comp.get("contribution_margin_pct")
+    )
     teams.append(
         TeamPerformanceSummary(
             team="finance",
             key_metrics={
                 "contribution_margin_pct": contribution_margin_pct,
-                "gross_profit_margin": 60.0,  # Placeholder
             },
-            trend="stable",
-            alert_count=0,
-            recommendation_count=0,
+            trend=finance_trend,
+            alert_count=0,  # TODO: Implement alert counting
+            recommendation_count=finance_recs,
         )
     )
 
     # Operations team
+    # For return rate, lower is better, so invert the trend logic
+    ops_trend = "stable"
+    if return_rate_pct is not None and comp.get("return_rate_pct") is not None:
+        change_pct = (
+            (return_rate_pct - comp["return_rate_pct"]) / comp["return_rate_pct"]
+        ) * 100.0
+        if change_pct < -5.0:  # Return rate going down is good
+            ops_trend = "improving"
+        elif change_pct > 5.0:  # Return rate going up is bad
+            ops_trend = "declining"
+
     teams.append(
         TeamPerformanceSummary(
             team="operations",
             key_metrics={
-                "inventory_turnover": None,
-                "return_rate_pct": None,
+                "return_rate_pct": return_rate_pct,
             },
-            trend="stable",
-            alert_count=0,
-            recommendation_count=0,
+            trend=ops_trend,
+            alert_count=0,  # TODO: Implement alert counting
+            recommendation_count=operations_recs,
         )
     )
 
