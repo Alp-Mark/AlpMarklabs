@@ -82,6 +82,13 @@ def create_shopify_connector(conn):
     
     if connector:
         print(f"   ✅ Connector already exists: {connector[0]}")
+        # Refresh last_synced_at so the dashboard shows "synced just now"
+        conn.execute(text("""
+            UPDATE connector_integrations
+            SET last_synced_at = :now
+            WHERE id = :cid
+        """), {"cid": connector[0], "now": datetime.utcnow()})
+        conn.commit()
         return connector[0]
     
     # Create connector
@@ -173,6 +180,22 @@ def insert_products(conn, products, connector_id):
 
 def generate_orders(conn, products, connector_id, days=90):
     """Generate realistic orders for One8 over the past X days."""
+    print(f"\n🛒 Generating {days} days of order data...")
+
+    # Clear existing orders so re-runs start with a clean slate and
+    # synced_at timestamps are refreshed to "now".
+    print("   🗑️  Clearing existing orders and line items...")
+    conn.execute(text("""
+        DELETE FROM shopify_order_line_items
+        WHERE order_id IN (
+            SELECT id FROM shopify_orders WHERE tenant_id = :tid
+        )
+    """), {"tid": ONE8_TENANT_ID})
+    conn.execute(text("""
+        DELETE FROM shopify_orders WHERE tenant_id = :tid
+    """), {"tid": ONE8_TENANT_ID})
+    conn.commit()
+    print("   ✅ Existing orders cleared")
     
     print(f"\n📊 Generating {days} days of order data...")
     
@@ -272,7 +295,7 @@ def generate_orders(conn, products, connector_id, days=90):
                 "refund_amount": 0.0 if financial_status == "paid" else float(total),
                 "is_refunded": financial_status != "paid",
                 "order_created_at": order_datetime,
-                "synced_at": order_datetime,
+                "synced_at": datetime.utcnow(),
             })
             
             total_orders += 1
@@ -631,14 +654,15 @@ def main():
         # Insert products
         insert_products(conn, products, connector_id)
         
-        # Generate orders (90 days)
-        generate_orders(conn, products, connector_id, days=90)
-        
+# Generate orders (180 days — provides 90-day current period + 90-day
+        # prior period so the executive dashboard shows real growth comparisons)
+        generate_orders(conn, products, connector_id, days=180)
+
         # Generate refunds
-        generate_refunds(conn, days=90)
-        
+        generate_refunds(conn, days=180)
+
         # Generate ad spend
-        generate_ad_spend(conn, days=90)
+        generate_ad_spend(conn, days=180)
         
         # Generate email campaigns
         generate_klaviyo_campaigns(conn, weeks=12)

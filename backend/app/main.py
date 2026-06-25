@@ -2288,6 +2288,30 @@ def deactivate_subscription_plan(
 # --------------------------------------------------------------------------------
 
 
+@app.get("/api/features")
+def list_global_features(
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[dict]:
+    """Return all available feature flag definitions (no auth required).
+
+    Used by frontend on startup to determine which features are available
+    on the platform before a tenant context is established.
+    """
+    flags = db.scalars(
+        select(FeatureFlag).where(FeatureFlag.is_available.is_(True))
+    ).all()
+    return [
+        {
+            "slug": f.slug,
+            "name": f.name,
+            "description": f.description,
+            "category": f.category,
+            "default_enabled": f.default_enabled,
+        }
+        for f in flags
+    ]
+
+
 @app.get("/tenants/{tenant_id}/features", response_model=list[TenantFeatureResponse])
 def get_tenant_features(
     tenant_id: uuid.UUID,

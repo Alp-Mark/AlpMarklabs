@@ -9,6 +9,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from backend.app.db.models import (
+    ConnectorIntegration,
     GoogleAdSpend,
     MetaAdSpend,
     ShopifyOrder,
@@ -49,7 +50,6 @@ def calculate_executive_overview(
             func.coalesce(func.sum(ShopifyOrder.refund_amount), 0.0).label(
                 "total_refunds"
             ),
-            func.max(ShopifyOrder.synced_at).label("last_synced"),
             func.max(ShopifyOrder.currency).label("currency"),
         )
         .where(ShopifyOrder.tenant_id == tenant_id)
@@ -59,8 +59,17 @@ def calculate_executive_overview(
     revenue_result = db.execute(revenue_query).one()
     total_revenue = float(revenue_result.total_revenue or 0.0)
     total_refunds = float(revenue_result.total_refunds or 0.0)
-    last_synced = revenue_result.last_synced
-    currency = revenue_result.currency or "USD"  # Default to USD if no orders
+    currency = revenue_result.currency or "INR"  # Default to INR for One8
+
+    # Use the Shopify connector's last_synced_at as the authoritative
+    # "data last synced" timestamp (reflects when the sync job ran, not
+    # the historical order date).
+    last_synced = db.scalar(
+        select(func.max(ConnectorIntegration.last_synced_at)).where(
+            ConnectorIntegration.tenant_id == tenant_id,
+            ConnectorIntegration.source == "shopify",
+        )
+    )
 
     # Net revenue after refunds
     net_revenue = total_revenue - total_refunds
@@ -116,8 +125,59 @@ def calculate_executive_overview(
         revenue_growth_rate = ((net_revenue - prior_revenue) / prior_revenue) * 100.0
         revenue_growth_absolute = net_revenue - prior_revenue
     else:
-        revenue_growth_rate = None
-        revenue_growth_absolute = None
+        # No prior-period data (e.g. brand-new account with only one period of
+        # history).  Fall back to an intra-period split: compare the second
+        # half of the current period against the first half so the dashboard
+        # always shows a meaningful trend instead of "No change data".
+        half_days = period_days // 2
+        mid_date = period_start + timedelta(days=half_days)
+
+        first_half_query = (
+            select(
+                func.coalesce(func.sum(ShopifyOrder.total_amount), 0.0).label(
+                    "total_revenue"
+                ),
+                func.coalesce(func.sum(ShopifyOrder.refund_amount), 0.0).label(
+                    "total_refunds"
+                ),
+            )
+            .where(ShopifyOrder.tenant_id == tenant_id)
+            .where(ShopifyOrder.order_created_at >= period_start)
+            .where(ShopifyOrder.order_created_at < mid_date)
+        )
+        first_half_result = db.execute(first_half_query).one()
+        first_half_revenue = float(
+            first_half_result.total_revenue or 0.0
+        ) - float(first_half_result.total_refunds or 0.0)
+
+        second_half_query = (
+            select(
+                func.coalesce(func.sum(ShopifyOrder.total_amount), 0.0).label(
+                    "total_revenue"
+                ),
+                func.coalesce(func.sum(ShopifyOrder.refund_amount), 0.0).label(
+                    "total_refunds"
+                ),
+            )
+            .where(ShopifyOrder.tenant_id == tenant_id)
+            .where(ShopifyOrder.order_created_at >= mid_date)
+            .where(ShopifyOrder.order_created_at <= period_end)
+        )
+        second_half_result = db.execute(second_half_query).one()
+        second_half_revenue = float(
+            second_half_result.total_revenue or 0.0
+        ) - float(second_half_result.total_refunds or 0.0)
+
+        if first_half_revenue > 0:
+            revenue_growth_rate = (
+                (second_half_revenue - first_half_revenue)
+                / first_half_revenue
+                * 100.0
+            )
+            revenue_growth_absolute = second_half_revenue - first_half_revenue
+        else:
+            revenue_growth_rate = None
+            revenue_growth_absolute = None
 
     # Calculate REAL COGS from inventory items (not estimates!)
     # Join line items with inventory to get actual cost_per_unit
@@ -131,7 +191,8 @@ def calculate_executive_overview(
             ) as total_cogs
         FROM shopify_order_line_items li
         JOIN shopify_orders o ON o.id = li.order_id
-        LEFT JOIN shopify_inventory_items inv ON inv.sku = li.sku AND inv.tenant_id = :tenant_id
+        LEFT JOIN shopify_inventory_items inv
+            ON inv.sku = li.sku AND inv.tenant_id = :tenant_id
         WHERE o.tenant_id = :tenant_id
         AND o.order_created_at >= :start
         AND o.order_created_at <= :end
