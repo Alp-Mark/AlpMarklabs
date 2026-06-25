@@ -194,7 +194,6 @@ def calculate_executive_overview(
     # Calculate Repeat Purchase Rate
     # Repeat Rate = (Customers with 2+ orders) / Total Customers
     # Need to use a subquery to count customers with 2+ orders
-    from sqlalchemy import text
     
     repeat_rate_result = db.execute(text("""
         WITH customer_order_counts AS (
