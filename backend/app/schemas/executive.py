@@ -43,6 +43,7 @@ class ExecutiveOverviewResponse(BaseModel):
     gross_profit: float  # Revenue - COGS
     contribution_margin: float  # Revenue - COGS - Shipping - Fulfillment - Ad Spend
     contribution_margin_pct: float  # Contribution margin as % of revenue
+    contribution_margin_pct_change: float | None  # % change vs comparison period
 
     # Growth Metrics
     revenue_growth_rate: float | None  # MoM or period-over-period growth %
@@ -50,9 +51,12 @@ class ExecutiveOverviewResponse(BaseModel):
 
     # Key Performance Indicators
     blended_roas: float | None  # Total revenue / total ad spend
+    blended_roas_change: float | None  # % change in ROAS vs comparison period
     cac_payback_days: float | None  # Average CAC payback period
     repeat_purchase_rate: float | None  # % customers with 2+ orders
+    repeat_purchase_rate_change: float | None  # % change vs comparison period
     return_rate_pct: float | None  # % orders returned
+    return_rate_pct_change: float | None  # % change vs comparison period
 
     # Business Health
     overall_health_status: str  # "healthy", "warning", "critical"

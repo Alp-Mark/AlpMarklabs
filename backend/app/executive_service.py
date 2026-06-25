@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import Any
+from uuid import UUID
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -20,8 +21,116 @@ from backend.app.schemas.executive import (
     TeamPerformanceSummary,
 )
 
-if TYPE_CHECKING:
-    from uuid import UUID
+
+def _get_period_metrics(
+    db: Session,
+    tenant_id: UUID,
+    period_start: date,
+    period_end: date,
+) -> dict[str, Any]:
+    """Return core KPI metrics for a given date range.
+
+    Used for comparison-period delta calculations.  COGS uses a flat 42 %
+    estimate here (consistent across both periods) rather than the heavy
+    line-item join used for the primary period display.
+    """
+    rev_row = db.execute(
+        select(
+            func.coalesce(func.sum(ShopifyOrder.total_amount), 0.0).label("total"),
+            func.coalesce(func.sum(ShopifyOrder.refund_amount), 0.0).label("refunds"),
+        )
+        .where(ShopifyOrder.tenant_id == tenant_id)
+        .where(ShopifyOrder.order_created_at >= period_start)
+        .where(ShopifyOrder.order_created_at <= period_end)
+    ).one()
+    net_revenue = float(rev_row.total or 0.0) - float(rev_row.refunds or 0.0)
+
+    meta = float(
+        db.scalar(
+            select(func.coalesce(func.sum(MetaAdSpend.spend_amount), 0.0))
+            .where(MetaAdSpend.tenant_id == tenant_id)
+            .where(MetaAdSpend.spend_date >= period_start)
+            .where(MetaAdSpend.spend_date <= period_end)
+        )
+        or 0.0
+    )
+    google = float(
+        db.scalar(
+            select(func.coalesce(func.sum(GoogleAdSpend.spend_amount), 0.0))
+            .where(GoogleAdSpend.tenant_id == tenant_id)
+            .where(GoogleAdSpend.spend_date >= period_start)
+            .where(GoogleAdSpend.spend_date <= period_end)
+        )
+        or 0.0
+    )
+    total_ad_spend = meta + google
+
+    blended_roas = net_revenue / total_ad_spend if total_ad_spend > 0 else None
+
+    order_count = db.scalar(
+        select(func.count(ShopifyOrder.id))
+        .where(ShopifyOrder.tenant_id == tenant_id)
+        .where(ShopifyOrder.order_created_at >= period_start)
+        .where(ShopifyOrder.order_created_at <= period_end)
+        .where(ShopifyOrder.is_refunded == False)  # noqa: E712
+    ) or 0
+
+    est_cogs = net_revenue * 0.42
+    est_shipping = order_count * 100.0
+    cm = net_revenue - est_cogs - est_shipping - total_ad_spend
+    cm_pct: float | None = (cm / net_revenue * 100.0) if net_revenue > 0 else None
+
+    rr_row = db.execute(
+        text("""
+            WITH coc AS (
+                SELECT customer_id, COUNT(*) AS order_count
+                FROM shopify_orders
+                WHERE tenant_id = :tid
+                AND order_created_at >= :start
+                AND order_created_at <= :end
+                AND is_refunded = false
+                AND customer_id IS NOT NULL
+                GROUP BY customer_id
+            )
+            SELECT
+                COUNT(*) FILTER (WHERE order_count >= 2) AS repeat_count,
+                COUNT(*) AS total_count
+            FROM coc
+        """),
+        {"tid": str(tenant_id), "start": period_start, "end": period_end},
+    ).one()
+    repeat_purchase_rate: float | None = (
+        (rr_row.repeat_count / rr_row.total_count * 100.0)
+        if (rr_row.total_count or 0) > 0
+        else None
+    )
+
+    refunded = db.scalar(
+        select(func.count(ShopifyOrder.id))
+        .where(ShopifyOrder.tenant_id == tenant_id)
+        .where(ShopifyOrder.order_created_at >= period_start)
+        .where(ShopifyOrder.order_created_at <= period_end)
+        .where(ShopifyOrder.is_refunded == True)  # noqa: E712
+    ) or 0
+    total_orders = order_count + refunded
+    return_rate_pct: float | None = (
+        (refunded / total_orders * 100.0) if total_orders > 0 else None
+    )
+
+    return {
+        "net_revenue": net_revenue,
+        "blended_roas": blended_roas,
+        "contribution_margin_pct": cm_pct,
+        "repeat_purchase_rate": repeat_purchase_rate,
+        "return_rate_pct": return_rate_pct,
+    }
+
+
+def _pct_delta(current: float | None, prior: float | None) -> float | None:
+    """Return % change from prior to current; None when either is unavailable."""
+    if current is None or prior is None or prior == 0:
+        return None
+    return ((current - prior) / abs(prior)) * 100.0
 
 
 def calculate_executive_overview(
@@ -102,6 +211,10 @@ def calculate_executive_overview(
     prior_period_start = period_start - timedelta(days=period_days)
     prior_period_end = period_start - timedelta(days=1)
 
+    # Always compute mid_date – used for intra-period fallback
+    half_days = period_days // 2
+    mid_date = period_start + timedelta(days=half_days)
+
     prior_revenue_query = (
         select(
             func.coalesce(func.sum(ShopifyOrder.total_amount), 0.0).label(
@@ -124,14 +237,12 @@ def calculate_executive_overview(
     if prior_revenue > 0:
         revenue_growth_rate = ((net_revenue - prior_revenue) / prior_revenue) * 100.0
         revenue_growth_absolute = net_revenue - prior_revenue
+        # Comparison period for all delta calculations = true prior period
+        comp_start: date = prior_period_start
+        comp_end: date = prior_period_end
     else:
-        # No prior-period data (e.g. brand-new account with only one period of
-        # history).  Fall back to an intra-period split: compare the second
-        # half of the current period against the first half so the dashboard
-        # always shows a meaningful trend instead of "No change data".
-        half_days = period_days // 2
-        mid_date = period_start + timedelta(days=half_days)
-
+        # No prior-period data – fall back to intra-period split (second half
+        # vs first half of the current period).
         first_half_query = (
             select(
                 func.coalesce(func.sum(ShopifyOrder.total_amount), 0.0).label(
@@ -178,6 +289,9 @@ def calculate_executive_overview(
         else:
             revenue_growth_rate = None
             revenue_growth_absolute = None
+        # Comparison period for all delta calculations = first half
+        comp_start = period_start
+        comp_end = mid_date - timedelta(days=1)
 
     # Calculate REAL COGS from inventory items (not estimates!)
     # Join line items with inventory to get actual cost_per_unit
@@ -301,6 +415,17 @@ def calculate_executive_overview(
     else:
         return_rate_pct = None
 
+    # Compute comparison-period deltas for all KPI cards
+    comp = _get_period_metrics(db, tenant_id, comp_start, comp_end)
+    contribution_margin_pct_change = _pct_delta(
+        contribution_margin_pct, comp["contribution_margin_pct"]
+    )
+    blended_roas_change = _pct_delta(blended_roas, comp["blended_roas"])
+    repeat_purchase_rate_change = _pct_delta(
+        repeat_purchase_rate, comp["repeat_purchase_rate"]
+    )
+    return_rate_pct_change = _pct_delta(return_rate_pct, comp["return_rate_pct"])
+
     # Business health indicators
     health_indicators = _calculate_health_indicators(
         net_revenue=net_revenue,
@@ -331,12 +456,16 @@ def calculate_executive_overview(
         gross_profit=gross_profit,
         contribution_margin=contribution_margin,
         contribution_margin_pct=contribution_margin_pct,
+        contribution_margin_pct_change=contribution_margin_pct_change,
         revenue_growth_rate=revenue_growth_rate,
         revenue_growth_absolute=revenue_growth_absolute,
         blended_roas=blended_roas,
+        blended_roas_change=blended_roas_change,
         cac_payback_days=cac_payback_days,
         repeat_purchase_rate=repeat_purchase_rate,
+        repeat_purchase_rate_change=repeat_purchase_rate_change,
         return_rate_pct=return_rate_pct,
+        return_rate_pct_change=return_rate_pct_change,
         overall_health_status=overall_health,
         health_indicators=health_indicators,
         team_performance=team_performance,
