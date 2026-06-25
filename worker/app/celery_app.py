@@ -39,6 +39,9 @@ celery_app = Celery(
 celery_app.conf.update(
     task_track_started=True,
     broker_connection_retry_on_startup=True,
+    # SSL/TLS configuration for Upstash Redis (or any Redis with TLS)
+    broker_use_ssl={"ssl_cert_reqs": "none"} if "upstash.io" in REDIS_URL else None,
+    redis_backend_use_ssl={"ssl_cert_reqs": "none"} if "upstash.io" in REDIS_URL else None,
     beat_schedule={
         "connector-sync-scheduler": {
             "task": "worker.app.tasks.run_connector_sync_schedule",
