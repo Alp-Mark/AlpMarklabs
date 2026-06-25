@@ -77,6 +77,13 @@ def generate_demo_data_one8():
         # === 2. Generate ad spend for today ===
         ad_spend_created = _generate_ad_spend(db)
         summary["ad_spend_records"] = ad_spend_created
+
+        # Update connector last_synced_at so the dashboard shows fresh sync time
+        db.execute(text("""
+            UPDATE connector_integrations
+            SET last_synced_at = :now
+            WHERE tenant_id = :tid AND source = 'shopify'
+        """), {"now": datetime.now(UTC), "tid": ONE8_TENANT_ID})
         
         # === 3. Update inventory snapshots ===
         inventory_updated = _update_inventory_snapshots(db)
@@ -145,7 +152,7 @@ def _generate_orders(db, connector_id: str, num_orders: int) -> dict:
     line_items_batch = []
     now = datetime.now(UTC)
     
-    for i in range(num_orders):
+    for _i in range(num_orders):
         # Random timestamp within last 6 hours
         minutes_ago = random.randint(0, 360)  # 0-6 hours
         order_time = now - timedelta(minutes=minutes_ago)
@@ -208,7 +215,9 @@ def _generate_orders(db, connector_id: str, num_orders: int) -> dict:
         })
         
         # Create line items
-        for item_idx, (sku, product_title, variant, price) in enumerate(selected_products):
+        for item_idx, (sku, product_title, variant, price) in enumerate(
+            selected_products
+        ):
             quantity = 1 if random.random() < 0.85 else 2
             
             line_items_batch.append({
@@ -234,7 +243,8 @@ def _generate_orders(db, connector_id: str, num_orders: int) -> dict:
             ) VALUES (
                 :id, :tenant_id, :connector_id, :external_order_id, :customer_id,
                 :order_number, :currency, :total_amount, :discount_amount,
-                :shipping_amount, :refund_amount, :is_refunded, :order_created_at, :synced_at
+                :shipping_amount, :refund_amount, :is_refunded,
+                :order_created_at, :synced_at
             )
         """), orders_batch)
     
@@ -246,7 +256,8 @@ def _generate_orders(db, connector_id: str, num_orders: int) -> dict:
                 product_title, variant_title, quantity, unit_price, order_created_at
             ) VALUES (
                 :id, :tenant_id, :order_id, :line_item_index, :sku,
-                :product_title, :variant_title, :quantity, :unit_price, :order_created_at
+                :product_title, :variant_title, :quantity,
+                :unit_price, :order_created_at
             )
         """), line_items_batch)
     
@@ -391,7 +402,9 @@ def _update_inventory_snapshots(db) -> bool:
     if not ONE8_CONNECTOR_ID:
         return True  # Skip if no connector
     
-    for sku, product_title, variant, retail_price, cogs, reorder_point in PRODUCTS_WITH_COGS:
+    for sku, product_title, variant, _retail_price, cogs, reorder_point in (
+        PRODUCTS_WITH_COGS
+    ):
         # Check if inventory item exists
         exists = db.scalar(text("""
             SELECT id FROM shopify_inventory_items
@@ -401,7 +414,10 @@ def _update_inventory_snapshots(db) -> bool:
         if exists:
             # Update stock level (simulate consumption and restocking)
             # Decrease by random amount (0-10), occasionally restock
-            change = random.randint(-10, 0) if random.random() < 0.8 else random.randint(20, 50)
+            change = (
+                random.randint(-10, 0) if random.random() < 0.8
+                else random.randint(20, 50)
+            )
             
             db.execute(text("""
                 UPDATE shopify_inventory_items
