@@ -10,8 +10,9 @@ Usage:
 """
 
 import os
-from notion_client import Client
 from datetime import datetime
+
+from notion_client import Client
 
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
 ROOT_PAGE_ID = os.getenv("NOTION_ROOT_PAGE_ID", "36391c4ec32b804e9eaaf27c38c21614")

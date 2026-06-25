@@ -1,6 +1,5 @@
 """Check tenant mappings for both users."""
 
-import os
 from sqlalchemy import create_engine, text
 
 # Railway database URL
@@ -29,12 +28,12 @@ with engine.connect() as conn:
         """), {"email": email}).fetchone()
         
         if not user:
-            print(f"❌ User does NOT exist in database")
+            print("❌ User does NOT exist in database")
             continue
         
         user_id = user[0]
         
-        print(f"✅ User exists")
+        print("✅ User exists")
         print(f"   User ID: {user_id}")
         
         # Check tenant memberships
@@ -51,7 +50,7 @@ with engine.connect() as conn:
         """), {"user_id": user_id}).fetchall()
         
         if not memberships:
-            print(f"\n⚠️  NO TENANT MEMBERSHIPS found")
+            print("\n⚠️  NO TENANT MEMBERSHIPS found")
         else:
             print(f"\n📋 Tenant Memberships ({len(memberships)}):")
             for tenant_id, tenant_name, membership_role, role_name in memberships:

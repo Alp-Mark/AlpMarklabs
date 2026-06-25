@@ -104,9 +104,9 @@ def main():
             '''), google_records)
             print(f"✓ Created {len(google_records)} Google ad spend records")
         
-        print(f"\n✅ Ad spend data generated successfully!")
+        print("\n✅ Ad spend data generated successfully!")
         print(f"Date range: {start_date} to {end_date} (90 days)")
-        print(f"\nReady for optimization testing!")
+        print("\nReady for optimization testing!")
 
 
 if __name__ == "__main__":

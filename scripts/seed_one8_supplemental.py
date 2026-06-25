@@ -7,8 +7,9 @@ This script ONLY generates refunds/ad spend/campaigns, NOT orders.
 import os
 import random
 import uuid
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from decimal import Decimal
+
 from sqlalchemy import create_engine, text
 
 # One8 tenant ID and connector ID (from previous seeding)
@@ -353,7 +354,7 @@ def main():
         """), {"tid": ONE8_TENANT_ID}).scalar()
         
         if order_count == 0:
-            print(f"\n❌ ERROR: No orders found! Run seed_one8_data.py first to seed products and orders.")
+            print("\n❌ ERROR: No orders found! Run seed_one8_data.py first to seed products and orders.")
             return
         
         print(f"✅ Found {order_count:,} existing orders")

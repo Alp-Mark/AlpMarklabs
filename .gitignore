@@ -47,6 +47,10 @@ htmlcov/
 backend/*.db
 worker/*.db
 
+# Celery runtime files
+celerybeat-schedule*
+logs/
+
 # Node (frontend)
 node_modules/
 frontend/.next/

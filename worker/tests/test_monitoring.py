@@ -4,13 +4,10 @@ Tests structured logging and Sentry integration for optimization runs.
 """
 
 import logging
-import os
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
-from sentry_sdk import Hub
-
 from worker.app.optimization.utils.monitoring import (
     log_data_quality_issue,
     log_model_performance,

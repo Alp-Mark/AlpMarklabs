@@ -17,6 +17,7 @@ if _REPO_ROOT not in sys.path:
 from backend.app.db.session import SessionLocal
 from sqlalchemy import text
 
+
 def clear_all_data():
     """Delete all data from all tables (keeps schema intact)."""
     db = SessionLocal()

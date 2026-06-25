@@ -26,7 +26,6 @@ from __future__ import annotations
 import os
 import sys
 import uuid
-from datetime import UTC, datetime
 
 # Ensure the repository root is importable when run as a plain script
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

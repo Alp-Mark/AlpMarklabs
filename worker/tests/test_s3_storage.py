@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
-
 from worker.app.optimization.utils.s3_storage import (
     delete_model,
     download_model,

@@ -4,6 +4,7 @@ Fix owner@one8commune.com to point to the correct One8 tenant with seeded data.
 """
 
 import os
+
 from sqlalchemy import create_engine, text
 
 # The correct One8 tenant with seeded data
@@ -44,7 +45,7 @@ with engine.connect() as conn:
         WHERE tm.user_id = :user_id
     """), {"user_id": user_id}).fetchall()
     
-    print(f"\n📋 Current memberships:")
+    print("\n📋 Current memberships:")
     has_correct_tenant = False
     has_wrong_tenant = False
     for tenant_id, tenant_name in current_memberships:
@@ -63,7 +64,7 @@ with engine.connect() as conn:
     else:
         # Remove membership from wrong tenant if it exists
         if has_wrong_tenant:
-            print(f"\n🗑️  Removing membership from wrong tenant...")
+            print("\n🗑️  Removing membership from wrong tenant...")
             conn.execute(text("""
                 DELETE FROM tenant_memberships 
                 WHERE user_id = :user_id AND tenant_id = :wrong_tenant_id
@@ -80,7 +81,7 @@ with engine.connect() as conn:
             """)).fetchone()
             
             if role:
-                print(f"➕ Creating membership in correct tenant with executive_owner role...")
+                print("➕ Creating membership in correct tenant with executive_owner role...")
                 conn.execute(text("""
                     INSERT INTO tenant_memberships (id, tenant_id, user_id, role, role_id, created_at)
                     VALUES (gen_random_uuid(), :tenant_id, :user_id, 'executive_owner', :role_id, NOW())

@@ -128,14 +128,14 @@ def analyze_catalog(products):
         ptype = p.get("product_type", "Unknown")
         types[ptype] = types.get(ptype, 0) + 1
     
-    print(f"\n📦 Products by Type:")
+    print("\n📦 Products by Type:")
     for ptype, count in sorted(types.items(), key=lambda x: x[1], reverse=True):
         print(f"   - {ptype}: {count}")
     
     # Price analysis
     all_prices = [p["min_price"] for p in products if p["min_price"] > 0]
     if all_prices:
-        print(f"\n💰 Price Range:")
+        print("\n💰 Price Range:")
         print(f"   - Lowest: ₹{min(all_prices):,.2f}")
         print(f"   - Highest: ₹{max(all_prices):,.2f}")
         print(f"   - Average: ₹{sum(all_prices) / len(all_prices):,.2f}")
@@ -149,7 +149,7 @@ def analyze_catalog(products):
     print(f"\n📦 Total Inventory Units: {total_inventory:,}")
     
     # Top products by price
-    print(f"\n🏆 Top 5 Most Expensive Products:")
+    print("\n🏆 Top 5 Most Expensive Products:")
     for p in sorted(products, key=lambda x: x["max_price"], reverse=True)[:5]:
         print(f"   - {p['title']}: ₹{p['max_price']:,.2f}")
     
@@ -205,11 +205,11 @@ def main():
     # Save to JSON
     output_path = save_to_json(products)
     
-    print(f"\n✅ Scraping complete!")
-    print(f"\n📋 Next steps:")
+    print("\n✅ Scraping complete!")
+    print("\n📋 Next steps:")
     print(f"   1. Review: cat {output_path}")
-    print(f"   2. Generate seed data with fake orders/ad spend")
-    print(f"   3. Import into AlpMark database")
+    print("   2. Generate seed data with fake orders/ad spend")
+    print("   3. Import into AlpMark database")
 
 
 if __name__ == "__main__":

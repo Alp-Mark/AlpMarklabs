@@ -32,7 +32,7 @@ def clean_database():
         print("   Run this script with: railway run python3 scripts/wipe_database.py")
         sys.exit(1)
     
-    print(f"🔌 Connecting to database...")
+    print("🔌 Connecting to database...")
     
     try:
         # Create SQLAlchemy engine
@@ -49,7 +49,7 @@ def clean_database():
             tenant_count = conn.execute(text("SELECT COUNT(*) FROM tenants")).scalar()
             user_count = conn.execute(text("SELECT COUNT(*) FROM users WHERE email != 'support@alpmarklabs.com'")).scalar()
             
-            print(f"\n📊 Current data:")
+            print("\n📊 Current data:")
             print(f"   - Tenants: {tenant_count}")
             print(f"   - Users (excluding super admin): {user_count}")
             
@@ -115,7 +115,7 @@ def clean_database():
             super_admin = conn.execute(text("SELECT email, is_platform_admin FROM users WHERE email = 'support@alpmarklabs.com'")).fetchone()
             
             if super_admin:
-                print(f"\n✅ Super admin preserved:")
+                print("\n✅ Super admin preserved:")
                 print(f"   - Email: {super_admin[0]}")
                 print(f"   - Platform Admin: {super_admin[1]}")
             else:
@@ -130,7 +130,7 @@ def clean_database():
         print("   - All other data: deleted")
         
     except Exception as e:
-        print(f"\n❌ ERROR: Failed to clean database")
+        print("\n❌ ERROR: Failed to clean database")
         print(f"   {type(e).__name__}: {e}")
         sys.exit(1)
 

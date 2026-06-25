@@ -2,6 +2,7 @@
 """Check what tables exist in the database."""
 
 import os
+
 from sqlalchemy import create_engine, text
 
 DATABASE_URL = os.getenv("DATABASE_PUBLIC_URL")

@@ -1,6 +1,5 @@
 """Clean up database - keep only One8 tenant with owner@one8commune.com."""
 
-import os
 from sqlalchemy import create_engine, text
 
 # Railway database URL
@@ -38,7 +37,7 @@ with engine.connect() as conn:
     if super_admin:
         print(f"\n👑 Super admin exists: {SUPER_ADMIN_EMAIL}")
         print(f"   User ID: {super_admin[0]}")
-        print(f"   (Will NOT be added to tenant - super admin accesses all tenants)")
+        print("   (Will NOT be added to tenant - super admin accesses all tenants)")
     else:
         print(f"\n⚠️  Super admin {SUPER_ADMIN_EMAIL} not found in database!")
     
@@ -70,7 +69,7 @@ with engine.connect() as conn:
         SELECT id, name, created_at FROM tenants ORDER BY created_at
     """)).fetchall()
     
-    print(f"\n📋 All tenants:")
+    print("\n📋 All tenants:")
     for tid, name, created_at in all_tenants:
         marker = "✅ KEEP" if str(tid) == KEEP_TENANT_ID else "❌ DELETE"
         print(f"   {marker} {name} ({tid})")
@@ -83,7 +82,7 @@ with engine.connect() as conn:
         WHERE tm.tenant_id = :tenant_id
     """), {"tenant_id": KEEP_TENANT_ID}).fetchall()
     
-    print(f"\n📋 One8 tenant memberships:")
+    print("\n📋 One8 tenant memberships:")
     for mid, email, role in one8_memberships:
         marker = "✅ KEEP" if email == KEEP_TENANT_MEMBER else "❌ DELETE"
         print(f"   {marker} {email} - {role}")
@@ -99,7 +98,7 @@ with engine.connect() as conn:
     print(f"\n   • {tenants_to_delete} tenant(s) (all except One8)")
     print(f"   • {one8_memberships_to_delete} One8 membership(s) (keep only owner@one8commune.com)")
     print(f"   • {other_tenant_memberships} membership(s) from other tenants")
-    print(f"   • All data (orders, products, etc.) from deleted tenants")
+    print("   • All data (orders, products, etc.) from deleted tenants")
     print(f"\n   ✅ WILL KEEP: {KEEP_TENANT_MEMBER} on One8 tenant")
     print(f"   👑 WILL KEEP: {SUPER_ADMIN_EMAIL} as super admin (not tenant member)")
     
@@ -181,12 +180,12 @@ with engine.connect() as conn:
     final_memberships = conn.execute(text("SELECT COUNT(*) FROM tenant_memberships")).scalar()
     final_orders = conn.execute(text("SELECT COUNT(*) FROM shopify_orders")).scalar()
     
-    print(f"\n📊 Final state:")
+    print("\n📊 Final state:")
     print(f"   Tenants: {final_tenants} (should be 1)")
     print(f"   Memberships: {final_memberships} (should be 1)")
     print(f"   Orders: {final_orders:,}")
     
-    print(f"\n✅ Cleanup complete!")
+    print("\n✅ Cleanup complete!")
     print(f"   One8 tenant: {KEEP_TENANT_MEMBER}")
     print(f"   Super admin: {SUPER_ADMIN_EMAIL} (can access all tenants)")
     print("=" * 80)

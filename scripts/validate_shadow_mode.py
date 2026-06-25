@@ -6,6 +6,7 @@ to verify shadow mode is producing reasonable results.
 """
 
 import os
+
 from sqlalchemy import create_engine, text
 
 # One8 test tenant ID

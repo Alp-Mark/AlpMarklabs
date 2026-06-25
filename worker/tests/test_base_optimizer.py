@@ -7,7 +7,7 @@ This test suite verifies:
 4. Missing abstract methods raise TypeError
 """
 
-from typing import Any, Type
+from typing import Any
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
@@ -107,7 +107,7 @@ class TestConcreteOptimizerSubclass:
     """Test that concrete subclass can be instantiated and used."""
     
     @pytest.fixture
-    def concrete_optimizer_class(self) -> Type[BaseOptimizer]:
+    def concrete_optimizer_class(self) -> type[BaseOptimizer]:
         """Create a concrete optimizer class for testing."""
         
         class ConcreteOptimizer(BaseOptimizer):
@@ -148,7 +148,7 @@ class TestConcreteOptimizerSubclass:
         return ConcreteOptimizer
     
     def test_can_instantiate_concrete_subclass(
-        self, concrete_optimizer_class: Type[BaseOptimizer]
+        self, concrete_optimizer_class: type[BaseOptimizer]
     ) -> None:
         """Concrete subclass with all abstract methods can be instantiated."""
         strategy_id = uuid4()
@@ -163,7 +163,7 @@ class TestConcreteOptimizerSubclass:
         assert optimizer.optimization_result is None
     
     def test_run_orchestrates_workflow(
-        self, concrete_optimizer_class: Type[BaseOptimizer]
+        self, concrete_optimizer_class: type[BaseOptimizer]
     ) -> None:
         """run() method calls all abstract methods in correct order."""
         strategy_id = uuid4()
@@ -191,7 +191,7 @@ class TestConcreteOptimizerSubclass:
         assert recommendation["confidence_level"] == 0.85
     
     def test_run_default_days_parameter(
-        self, concrete_optimizer_class: Type[BaseOptimizer]
+        self, concrete_optimizer_class: type[BaseOptimizer]
     ) -> None:
         """run() uses 90 days as default if not specified."""
         strategy_id = uuid4()
@@ -205,7 +205,7 @@ class TestConcreteOptimizerSubclass:
         assert optimizer.training_data["days"] == 90
     
     def test_run_custom_days_parameter(
-        self, concrete_optimizer_class: Type[BaseOptimizer]
+        self, concrete_optimizer_class: type[BaseOptimizer]
     ) -> None:
         """run() respects custom days parameter."""
         strategy_id = uuid4()

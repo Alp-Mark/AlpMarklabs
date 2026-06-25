@@ -4,6 +4,7 @@ Verify One8 seeded data in the database.
 """
 
 import os
+
 from sqlalchemy import create_engine, text
 
 # One8 tenant ID
@@ -31,7 +32,7 @@ with engine.connect() as conn:
     if tenant:
         print(f"\n✅ Tenant: {tenant[0]} (created: {tenant[1]})")
     else:
-        print(f"\n❌ Tenant not found!")
+        print("\n❌ Tenant not found!")
         exit(1)
     
     # Check connector
@@ -43,7 +44,7 @@ with engine.connect() as conn:
     if connector:
         print(f"✅ Connector: {connector[1]} - {connector[2]}")
     else:
-        print(f"❌ No connector found!")
+        print("❌ No connector found!")
     
     # Check products
     products = conn.execute(text("""
@@ -68,10 +69,10 @@ with engine.connect() as conn:
         print(f"   💰 Revenue: ₹{result[1]:,.2f}")
         print(f"   📅 Date range: {result[2].date()} to {result[3].date()}")
     else:
-        print(f"❌ No orders found!")
+        print("❌ No orders found!")
     
     # Check what tables exist
-    print(f"\n📋 Checking optional data tables...")
+    print("\n📋 Checking optional data tables...")
     
     tables_to_check = [
         "shopify_refunds",

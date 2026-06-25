@@ -125,7 +125,9 @@ class RuleEngine:
         is populated via scorer.compute_impact_score (T-055).
         """
         # Import here to avoid module-level circular references.
-        from worker.app.rules.confidence import compute_confidence_level  # noqa: PLC0415
+        from worker.app.rules.confidence import (
+            compute_confidence_level,  # noqa: PLC0415
+        )
         from worker.app.rules.evidence import build_evidence  # noqa: PLC0415
         from worker.app.rules.scorer import compute_impact_score  # noqa: PLC0415
 

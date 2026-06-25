@@ -25,9 +25,9 @@ from pathlib import Path
 backend_path = Path(__file__).parent.parent / "backend"
 sys.path.insert(0, str(backend_path))
 
-from sqlalchemy import create_engine, text
 from decimal import Decimal
 
+from sqlalchemy import create_engine, text
 
 # One8 tenant ID (created from frontend)
 ONE8_TENANT_ID = "23165fa5-150b-4b6c-a637-b3dd24532c4d"
@@ -63,7 +63,7 @@ def load_scraped_products():
         print("   Run: python3 scripts/scrape_one8.py first")
         sys.exit(1)
     
-    with open(json_path, "r", encoding="utf-8") as f:
+    with open(json_path, encoding="utf-8") as f:
         data = json.load(f)
     
     return data["products"]
@@ -72,7 +72,7 @@ def load_scraped_products():
 def create_shopify_connector(conn):
     """Create a Shopify connector integration for One8."""
     
-    print(f"\n🔌 Creating Shopify connector...")
+    print("\n🔌 Creating Shopify connector...")
     
     # Check if connector already exists
     connector = conn.execute(text("""
@@ -321,7 +321,7 @@ def generate_refunds(conn, days=90):
             conn.commit()
     except Exception as e:
         if "does not exist" in str(e):
-            print(f"   ⚠️  shopify_refunds table does not exist, skipping...")
+            print("   ⚠️  shopify_refunds table does not exist, skipping...")
             return
         raise
     
@@ -425,7 +425,7 @@ def generate_ad_spend(conn, days=90):
             conn.commit()
     except Exception as e:
         if "does not exist" in str(e):
-            print(f"   ⚠️  Ad spend tables do not exist, skipping...")
+            print("   ⚠️  Ad spend tables do not exist, skipping...")
             return
         raise
     
@@ -545,7 +545,7 @@ def generate_klaviyo_campaigns(conn, weeks=12):
             conn.commit()
     except Exception as e:
         if "does not exist" in str(e):
-            print(f"   ⚠️  klaviyo_campaigns table does not exist, skipping...")
+            print("   ⚠️  klaviyo_campaigns table does not exist, skipping...")
             return
         raise
     
@@ -607,7 +607,7 @@ def main():
     print("🏏 ONE8 DATA SEEDING")
     print("="*60)
     print(f"Tenant ID: {ONE8_TENANT_ID}")
-    print(f"Brand: One8 by Virat Kohli")
+    print("Brand: One8 by Virat Kohli")
     print("="*60)
     
     # Get database connection
