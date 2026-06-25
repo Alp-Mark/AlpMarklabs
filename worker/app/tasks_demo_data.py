@@ -257,71 +257,103 @@ def _generate_orders(db, connector_id: str, num_orders: int) -> dict:
 
 
 def _generate_ad_spend(db) -> int:
-    """Generate today's ad spend data if not already exists."""
-    
+    """Generate today's ad spend data if not already exists.
+
+    Matches the real meta_ad_spends/google_ad_spends schema:
+    id, tenant_id, connector_id, external_campaign_id, campaign_name,
+    spend_date, currency, spend_amount, synced_at, created_at, updated_at.
+    """
+
     today = date.today()
-    
-    # Check if today's spend already exists
+    now = datetime.now(UTC)
+
+    # Reuse an existing connector + campaign so columns/FKs match real data.
+    meta_ref = db.execute(text("""
+        SELECT connector_id, external_campaign_id FROM meta_ad_spends
+        WHERE tenant_id = :tid ORDER BY spend_date DESC LIMIT 1
+    """), {"tid": ONE8_TENANT_ID}).fetchone()
+    google_ref = db.execute(text("""
+        SELECT connector_id, external_campaign_id FROM google_ad_spends
+        WHERE tenant_id = :tid ORDER BY spend_date DESC LIMIT 1
+    """), {"tid": ONE8_TENANT_ID}).fetchone()
+
+    fallback_connector = db.scalar(text("""
+        SELECT id FROM connector_integrations WHERE tenant_id = :tid LIMIT 1
+    """), {"tid": ONE8_TENANT_ID})
+
+    meta_connector = meta_ref[0] if meta_ref else fallback_connector
+    meta_campaign = meta_ref[1] if meta_ref else "one8_meta_daily"
+    google_connector = google_ref[0] if google_ref else fallback_connector
+    google_campaign = google_ref[1] if google_ref else "one8_google_daily"
+
     meta_exists = db.scalar(text("""
-        SELECT COUNT(*) FROM meta_ad_spends 
+        SELECT COUNT(*) FROM meta_ad_spends
         WHERE tenant_id = :tid AND spend_date = :date
     """), {"tid": ONE8_TENANT_ID, "date": today})
-    
+
     google_exists = db.scalar(text("""
-        SELECT COUNT(*) FROM google_ad_spends 
+        SELECT COUNT(*) FROM google_ad_spends
         WHERE tenant_id = :tid AND spend_date = :date
     """), {"tid": ONE8_TENANT_ID, "date": today})
-    
+
     records_created = 0
-    
-    # Meta ad spend (₹20k-40k per day)
-    if not meta_exists:
+
+    # Meta ad spend (Rs 20k-40k per day)
+    if not meta_exists and meta_connector is not None:
         meta_spend = random.uniform(20000, 40000)
         db.execute(text("""
             INSERT INTO meta_ad_spends (
-                id, tenant_id, spend_date, spend_amount, currency,
-                campaign_name, impressions, clicks, synced_at
+                id, tenant_id, connector_id, external_campaign_id,
+                campaign_name, spend_date, currency, spend_amount,
+                synced_at, created_at, updated_at
             ) VALUES (
-                :id, :tenant_id, :spend_date, :spend_amount, :currency,
-                :campaign_name, :impressions, :clicks, :synced_at
+                :id, :tenant_id, :connector_id, :external_campaign_id,
+                :campaign_name, :spend_date, :currency, :spend_amount,
+                :synced_at, :created_at, :updated_at
             )
         """), {
             "id": str(uuid.uuid4()),
             "tenant_id": ONE8_TENANT_ID,
-            "spend_date": today,
-            "spend_amount": round(meta_spend, 2),
-            "currency": "INR",
+            "connector_id": str(meta_connector),
+            "external_campaign_id": meta_campaign,
             "campaign_name": "One8_Meta_Daily",
-            "impressions": int(meta_spend * random.uniform(80, 120)),
-            "clicks": int(meta_spend * random.uniform(2, 5)),
-            "synced_at": datetime.now(UTC),
+            "spend_date": today,
+            "currency": "INR",
+            "spend_amount": round(meta_spend, 2),
+            "synced_at": now,
+            "created_at": now,
+            "updated_at": now,
         })
         records_created += 1
-    
-    # Google ad spend (₹15k-30k per day)
-    if not google_exists:
+
+    # Google ad spend (Rs 15k-30k per day)
+    if not google_exists and google_connector is not None:
         google_spend = random.uniform(15000, 30000)
         db.execute(text("""
             INSERT INTO google_ad_spends (
-                id, tenant_id, spend_date, spend_amount, currency,
-                campaign_name, impressions, clicks, synced_at
+                id, tenant_id, connector_id, external_campaign_id,
+                campaign_name, spend_date, currency, spend_amount,
+                synced_at, created_at, updated_at
             ) VALUES (
-                :id, :tenant_id, :spend_date, :spend_amount, :currency,
-                :campaign_name, :impressions, :clicks, :synced_at
+                :id, :tenant_id, :connector_id, :external_campaign_id,
+                :campaign_name, :spend_date, :currency, :spend_amount,
+                :synced_at, :created_at, :updated_at
             )
         """), {
             "id": str(uuid.uuid4()),
             "tenant_id": ONE8_TENANT_ID,
-            "spend_date": today,
-            "spend_amount": round(google_spend, 2),
-            "currency": "INR",
+            "connector_id": str(google_connector),
+            "external_campaign_id": google_campaign,
             "campaign_name": "One8_Google_Daily",
-            "impressions": int(google_spend * random.uniform(90, 130)),
-            "clicks": int(google_spend * random.uniform(2.5, 6)),
-            "synced_at": datetime.now(UTC),
+            "spend_date": today,
+            "currency": "INR",
+            "spend_amount": round(google_spend, 2),
+            "synced_at": now,
+            "created_at": now,
+            "updated_at": now,
         })
         records_created += 1
-    
+
     return records_created
 
 
