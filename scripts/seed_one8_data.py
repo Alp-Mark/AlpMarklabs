@@ -654,15 +654,14 @@ def main():
         # Insert products
         insert_products(conn, products, connector_id)
         
-# Generate orders (180 days — provides 90-day current period + 90-day
-        # prior period so the executive dashboard shows real growth comparisons)
-        generate_orders(conn, products, connector_id, days=180)
+# Generate orders (90 days)
+        generate_orders(conn, products, connector_id, days=90)
 
         # Generate refunds
-        generate_refunds(conn, days=180)
+        generate_refunds(conn, days=90)
 
         # Generate ad spend
-        generate_ad_spend(conn, days=180)
+        generate_ad_spend(conn, days=90)
         
         # Generate email campaigns
         generate_klaviyo_campaigns(conn, weeks=12)
