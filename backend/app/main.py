@@ -10270,11 +10270,11 @@ def get_executive_overview(
     if not membership:
         raise HTTPException(status_code=403, detail="Access denied to this tenant")
 
-    # Default to last 30 days if no period specified
+    # Default to last 90 days if no period specified
     if period_end is None:
         period_end = date.today()
     if period_start is None:
-        period_start = period_end - timedelta(days=30)
+        period_start = period_end - timedelta(days=90)
 
     # Validate period
     if period_start > period_end:
@@ -10342,11 +10342,11 @@ def get_growth_dashboard(
     if not membership:
         raise HTTPException(status_code=403, detail="Access denied to this tenant")
 
-    # Default to last 30 days if no period specified
+    # Default to last 90 days if no period specified
     if period_end is None:
         period_end = date.today()
     if period_start is None:
-        period_start = period_end - timedelta(days=30)
+        period_start = period_end - timedelta(days=90)
 
     # Validate period
     if period_start > period_end:

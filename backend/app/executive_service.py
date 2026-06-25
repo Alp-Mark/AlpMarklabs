@@ -119,15 +119,129 @@ def calculate_executive_overview(
         revenue_growth_rate = None
         revenue_growth_absolute = None
 
-    # For now, use simplified calculations without full cost data
-    # In production, these would query CostInput and apply tiered logic
-    gross_profit = net_revenue * 0.6  # Placeholder: 60% gross margin assumption
-    contribution_margin = (
-        net_revenue * 0.4
-    )  # Placeholder: 40% contribution margin assumption
-    contribution_margin_pct = 40.0  # Placeholder percentage
+    # Calculate REAL COGS from inventory items (not estimates!)
+    # Join line items with inventory to get actual cost_per_unit
+    # If inventory item missing COGS, fallback to 42% estimate
+    
+    cogs_query = text("""
+        SELECT 
+            COALESCE(
+                SUM(li.quantity * COALESCE(inv.cost_per_unit, li.unit_price * 0.42)),
+                0
+            ) as total_cogs
+        FROM shopify_order_line_items li
+        JOIN shopify_orders o ON o.id = li.order_id
+        LEFT JOIN shopify_inventory_items inv ON inv.sku = li.sku AND inv.tenant_id = :tenant_id
+        WHERE o.tenant_id = :tenant_id
+        AND o.order_created_at >= :start
+        AND o.order_created_at <= :end
+        AND o.is_refunded = false
+    """)
+    
+    real_cogs = db.scalar(cogs_query, {
+        "tenant_id": tenant_id,
+        "start": period_start,
+        "end": period_end
+    }) or 0.0
+    
+    # Count orders in period for shipping calc
+    order_count = db.scalar(
+        select(func.count(ShopifyOrder.id))
+        .where(ShopifyOrder.tenant_id == tenant_id)
+        .where(ShopifyOrder.order_created_at >= period_start)
+        .where(ShopifyOrder.order_created_at <= period_end)
+        .where(ShopifyOrder.is_refunded == False)  # noqa: E712
+    ) or 0
+    
+    estimated_shipping = order_count * 100.0  # ₹100 per order
+    
+    # Gross profit = Revenue - REAL COGS
+    gross_profit = net_revenue - real_cogs
+    
+    # Contribution margin = Gross Profit - Shipping - Ad Spend
+    contribution_margin = gross_profit - estimated_shipping - total_ad_spend
+    contribution_margin_pct = (
+        (contribution_margin / net_revenue * 100.0) if net_revenue > 0 else 0.0
+    )
+    
+    # Calculate CAC Payback Days (for current period)
+    # CAC Payback = Total Ad Spend / New Customers / 
+    #               (Avg Order Value * Contribution Margin %)
+    # Simplified: use period ad spend / period orders for CAC
+    new_customer_count = db.scalar(
+        select(func.count(func.distinct(ShopifyOrder.customer_id)))
+        .where(ShopifyOrder.tenant_id == tenant_id)
+        .where(ShopifyOrder.order_created_at >= period_start)
+        .where(ShopifyOrder.order_created_at <= period_end)
+        .where(ShopifyOrder.is_refunded == False)  # noqa: E712
+    ) or 0
+    
+    if new_customer_count > 0 and net_revenue > 0 and contribution_margin > 0:
+        cac = total_ad_spend / new_customer_count
+        contribution_per_order = (
+            contribution_margin / order_count if order_count > 0 else 0
+        )
+        # Payback days = CAC / (contribution per order / 30 days)
+        # Assumes monthly purchase frequency
+        cac_payback_days = (
+            (cac / contribution_per_order * 30)
+            if contribution_per_order > 0
+            else None
+        )
+    else:
+        cac_payback_days = None
+    
+    # Calculate Repeat Purchase Rate
+    # Repeat Rate = (Customers with 2+ orders) / Total Customers
+    # Need to use a subquery to count customers with 2+ orders
+    from sqlalchemy import text
+    
+    repeat_rate_result = db.execute(text("""
+        WITH customer_order_counts AS (
+            SELECT customer_id, COUNT(*) as order_count
+            FROM shopify_orders
+            WHERE tenant_id = :tenant_id
+            AND order_created_at >= :period_start
+            AND order_created_at <= :period_end
+            AND is_refunded = false
+            AND customer_id IS NOT NULL
+            GROUP BY customer_id
+        )
+        SELECT 
+            COUNT(*) FILTER (WHERE order_count >= 2) as repeat_customers,
+            COUNT(*) as total_customers
+        FROM customer_order_counts
+    """), {
+        'tenant_id': str(tenant_id),
+        'period_start': period_start,
+        'period_end': period_end
+    }).one()
+    
+    repeat_customers_count = repeat_rate_result.repeat_customers or 0
+    total_customers = repeat_rate_result.total_customers or 0
+    
+    if total_customers > 0:
+        repeat_purchase_rate = (repeat_customers_count / total_customers) * 100.0
+    else:
+        repeat_purchase_rate = None
+    
+    # Calculate Return Rate
+    # Return Rate = (Refunded Orders) / Total Orders
+    refunded_count = db.scalar(
+        select(func.count(ShopifyOrder.id))
+        .where(ShopifyOrder.tenant_id == tenant_id)
+        .where(ShopifyOrder.order_created_at >= period_start)
+        .where(ShopifyOrder.order_created_at <= period_end)
+        .where(ShopifyOrder.is_refunded == True)  # noqa: E712
+    ) or 0
+    
+    total_orders = order_count + refunded_count
+    if total_orders > 0:
+        return_rate_pct = (refunded_count / total_orders) * 100.0
+    else:
+        return_rate_pct = None
 
-    # Business health indicators (simplified logic)
+    # Business health indicators
     health_indicators = _calculate_health_indicators(
         net_revenue=net_revenue,
         blended_roas=blended_roas,
@@ -146,7 +260,7 @@ def calculate_executive_overview(
     else:
         overall_health = "healthy"
 
-    # Team performance summaries (placeholder data for now)
+    # Team performance summaries
     team_performance = _calculate_team_performance(
         blended_roas=blended_roas,
         contribution_margin_pct=contribution_margin_pct,
@@ -160,9 +274,9 @@ def calculate_executive_overview(
         revenue_growth_rate=revenue_growth_rate,
         revenue_growth_absolute=revenue_growth_absolute,
         blended_roas=blended_roas,
-        cac_payback_days=None,  # Would need customer-level cohort data
-        repeat_purchase_rate=None,  # Would need customer repeat purchase analysis
-        return_rate_pct=None,  # Would need return-specific data
+        cac_payback_days=cac_payback_days,
+        repeat_purchase_rate=repeat_purchase_rate,
+        return_rate_pct=return_rate_pct,
         overall_health_status=overall_health,
         health_indicators=health_indicators,
         team_performance=team_performance,

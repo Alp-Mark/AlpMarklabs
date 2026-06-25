@@ -18,6 +18,7 @@ SYSTEM_SYNC_CADENCE = {
     "rule-engine-schedule": timedelta(hours=1),  # Every 1 hour
     "threshold-suggestion-schedule": timedelta(days=7),
     "run-optimization-engine": timedelta(hours=6),  # Every 6 hours (Phase 2)
+    "demo-data-generation-6h": timedelta(hours=6),  # Every 6 hours (One8 demo)
     "daily-data-simulation": timedelta(days=1),  # Every day at midnight
 }
 
@@ -32,7 +33,7 @@ celery_app = Celery(
     "alpmark_worker",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["worker.app.tasks"],
+    include=["worker.app.tasks", "worker.app.tasks_demo_data"],
 )
 
 celery_app.conf.update(
@@ -106,6 +107,10 @@ celery_app.conf.update(
         "run-optimization-engine": {
             "task": "worker.app.tasks.run_optimization_engine_schedule",
             "schedule": SYSTEM_SYNC_CADENCE["run-optimization-engine"],
+        },
+        "demo-data-generation-6h": {
+            "task": "worker.app.tasks_demo_data.generate_demo_data_one8",
+            "schedule": SYSTEM_SYNC_CADENCE["demo-data-generation-6h"],
         },
         "daily-data-simulation": {
             "task": "worker.app.tasks.run_daily_data_simulation_schedule",
