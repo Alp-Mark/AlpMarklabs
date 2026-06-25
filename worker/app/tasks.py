@@ -41,6 +41,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from worker.app.celery_app import celery_app
+from worker.app.daily_data_simulator import run_daily_simulation
 from worker.app.optimization.strategies.acquisition import (
     BudgetAllocationOptimizer,
 )
@@ -3802,40 +3803,44 @@ def run_analysis_view_exports_schedule() -> dict[str, Any]:
     Optional daily task to export and email saved analysis views
     (FR-034 / T-064).
     """
-    return run_optimization_shadow_mode_job()
+    return run_optimization_engine_job()
 
 
-def run_optimization_shadow_mode_job(
+def run_optimization_engine_job(
     *,
     session_factory: sessionmaker[Session] = SessionLocal,
 ) -> dict[str, Any]:
     """
-    Run optimization shadow mode for all active tenants.
+    Run optimization engine for all active tenants (Phase 2 Beta Launch).
     
-    Shadow mode executes the optimizer workflow (fetch data, train models,
-    optimize) and logs results to OptimizationRun database records, but does
-    NOT create user-facing Recommendation records. This allows testing and
-    validation of optimization logic in production without impacting users.
+    Executes the optimizer workflow (fetch data, train models, optimize) and
+    creates user-facing Recommendation records with ML-generated insights.
+    Each recommendation is linked to its fitted model and optimization run
+    for full provenance.
     
-    Only runs if OPTIMIZATION_SHADOW_MODE environment variable is set to "true".
+    Environment:
+        ENABLE_OPTIMIZATION_ENGINE: Set to "true" to enable (default: "false")
     
     Returns:
-        Dict with run statistics: tenants_processed, successful_runs, failed_runs
+        Dict with run statistics: tenants_processed, successful_runs, 
+        failed_runs, recommendations_created
     """
-    # Check if shadow mode is enabled
-    if os.getenv("OPTIMIZATION_SHADOW_MODE") != "true":
-        logger.info("Shadow mode not enabled - skipping optimization run")
+    # Check if optimization engine is enabled
+    if os.getenv("ENABLE_OPTIMIZATION_ENGINE", "false").lower() != "true":
+        logger.info("Optimization engine disabled - skipping optimization run")
         return {
-            "shadow_mode_enabled": False,
+            "engine_enabled": False,
             "tenants_processed": 0,
             "successful_runs": 0,
             "failed_runs": 0,
+            "recommendations_created": 0,
         }
     
     db = session_factory()
     tenants_processed = 0
     successful_runs = 0
     failed_runs = 0
+    recommendations_created = 0
     
     try:
         # Query all active tenants
@@ -3845,7 +3850,7 @@ def run_optimization_shadow_mode_job(
             )
         )
         
-        logger.info(f"Shadow mode: Processing {len(tenants)} active tenants")
+        logger.info(f"Optimization engine: Processing {len(tenants)} active tenants")
         
         for tenant in tenants:
             tenants_processed += 1
@@ -3861,7 +3866,8 @@ def run_optimization_shadow_mode_job(
             
             if not strategies:
                 logger.debug(
-                    f"Shadow mode: No enabled strategies for tenant {tenant.slug}"
+                    f"Optimization engine: No enabled strategies for "
+                    f"tenant {tenant.slug}"
                 )
                 continue
             
@@ -3882,12 +3888,17 @@ def run_optimization_shadow_mode_job(
                             db=db,
                         )
                         
-                        # Run optimization workflow (fetch, train, optimize, generate)
+                        # Run optimization workflow (fetch, train, optimize)
                         # This creates OptimizationRun and FittedModel records
                         result = optimizer.run(
                             tenant_id=tenant.id,
                             days=strategy.config.get("lookback_days", 90),
                         )
+                        
+                        # Create user-facing recommendation from optimization result
+                        recommendation = optimizer.create_recommendation_record()
+                        db.commit()
+                        recommendations_created += 1
                         
                         # Log success (run_id will be set after train_models)
                         if optimizer.optimization_run_id:
@@ -3903,6 +3914,7 @@ def run_optimization_shadow_mode_job(
                                         "conversions_lift_pct"
                                     ),
                                     "confidence": result.get("confidence_level"),
+                                    "recommendation_id": str(recommendation.id),
                                 },
                             )
                         
@@ -3910,14 +3922,15 @@ def run_optimization_shadow_mode_job(
                             "conversions_lift_pct", 0
                         )
                         logger.info(
-                            f"Shadow mode success: {tenant.slug} / "
-                            f"{strategy.strategy_name} - lift={lift_pct:.1f}%"
+                            f"Optimization success: {tenant.slug} / "
+                            f"{strategy.strategy_name} - lift={lift_pct:.1f}% - "
+                            f"recommendation={recommendation.id}"
                         )
                         successful_runs += 1
                     
                     else:
                         logger.warning(
-                            f"Shadow mode: Unknown strategy type "
+                            f"Optimization engine: Unknown strategy type "
                             f"'{strategy.strategy_type}' for tenant {tenant.slug}"
                         )
                 
@@ -3945,7 +3958,7 @@ def run_optimization_shadow_mode_job(
                         )
                     
                     logger.error(
-                        f"Shadow mode failed: {tenant.slug} / "
+                        f"Optimization engine failed: {tenant.slug} / "
                         f"{strategy.strategy_name} - {e}"
                     )
                     
@@ -3953,35 +3966,69 @@ def run_optimization_shadow_mode_job(
                     sentry_sdk.capture_exception(e)
         
         logger.info(
-            f"Shadow mode complete: {tenants_processed} tenants, "
-            f"{successful_runs} successful, {failed_runs} failed"
+            f"Optimization engine complete: {tenants_processed} tenants, "
+            f"{successful_runs} successful, {failed_runs} failed, "
+            f"{recommendations_created} recommendations created"
         )
         
         return {
-            "shadow_mode_enabled": True,
+            "engine_enabled": True,
             "tenants_processed": tenants_processed,
             "successful_runs": successful_runs,
             "failed_runs": failed_runs,
+            "recommendations_created": recommendations_created,
         }
     
     finally:
         db.close()
 
 
-@celery_app.task(name="worker.app.tasks.run_optimization_shadow_mode_schedule")
-def run_optimization_shadow_mode_schedule() -> dict[str, Any]:
+@celery_app.task(name="worker.app.tasks.run_optimization_engine_schedule")
+def run_optimization_engine_schedule() -> dict[str, Any]:
     """
-    Scheduled task to run optimization in shadow mode.
+    Scheduled task to run ML optimization engine (Phase 2 Beta Launch).
     
-    Shadow mode runs the full optimization workflow and logs results to the
-    database, but does NOT create user-facing recommendations. This allows
-    testing optimization logic in production.
-    
-    Environment:
-        OPTIMIZATION_SHADOW_MODE: Set to "true" to enable shadow mode runs
+    Runs the full optimization workflow (fetch data, train saturation curves,
+    optimize budget allocations) and creates user-facing Recommendation records
+    with ML-generated insights. Each recommendation includes source='optimization',
+    optimization_metadata with model accuracy, and fitted_model_id for provenance.
     
     Returns:
-        Dict with execution statistics
+        Dict with execution statistics including recommendations_created
     """
-    return run_optimization_shadow_mode_job()
+    return run_optimization_engine_job()
+
+
+@celery_app.task(name="worker.app.tasks.run_daily_data_simulation_schedule")
+def run_daily_data_simulation_schedule() -> dict[str, Any]:
+    """
+    Scheduled task to generate daily simulated data for One8 tenant.
+    
+    Simulates continuous Shopify and ad platform data ingestion by generating
+    realistic daily orders, refunds, and ad spend. This keeps the test dataset
+    growing organically like a real production environment.
+    
+    Environment:
+        ENABLE_DAILY_DATA_SIMULATION: Set to "true" to enable (default: disabled)
+    
+    Returns:
+        Dict with generation statistics
+    """
+    # Check if simulation is enabled
+    enabled = os.getenv("ENABLE_DAILY_DATA_SIMULATION", "false").lower() == "true"
+    
+    if not enabled:
+        return {
+            "simulation_enabled": False,
+            "message": (
+                "Daily data simulation is disabled. "
+                "Set ENABLE_DAILY_DATA_SIMULATION=true to enable."
+            ),
+        }
+    
+    # Run simulation for today
+    result = run_daily_simulation()
+    result["simulation_enabled"] = True
+    
+    return result
 

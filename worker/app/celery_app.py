@@ -17,7 +17,8 @@ SYSTEM_SYNC_CADENCE = {
     "operational-impact-schedule": timedelta(hours=4),  # Every 4 hours
     "rule-engine-schedule": timedelta(hours=1),  # Every 1 hour
     "threshold-suggestion-schedule": timedelta(days=7),
-    "run-optimization-shadow-mode": timedelta(hours=6),  # Every 6 hours
+    "run-optimization-engine": timedelta(hours=6),  # Every 6 hours (Phase 2)
+    "daily-data-simulation": timedelta(days=1),  # Every day at midnight
 }
 
 SOURCE_SYNC_CADENCE = {
@@ -102,9 +103,13 @@ celery_app.conf.update(
             "task": "worker.app.tasks.run_google_spend_sync_schedule",
             "schedule": SOURCE_SYNC_CADENCE["google-spend-sync-schedule"],
         },
-        "run-optimization-shadow-mode": {
-            "task": "worker.app.tasks.run_optimization_shadow_mode_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE["run-optimization-shadow-mode"],
+        "run-optimization-engine": {
+            "task": "worker.app.tasks.run_optimization_engine_schedule",
+            "schedule": SYSTEM_SYNC_CADENCE["run-optimization-engine"],
+        },
+        "daily-data-simulation": {
+            "task": "worker.app.tasks.run_daily_data_simulation_schedule",
+            "schedule": SYSTEM_SYNC_CADENCE["daily-data-simulation"],
         },
     },
 )

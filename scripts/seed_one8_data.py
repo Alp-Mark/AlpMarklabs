@@ -343,6 +343,16 @@ def generate_refunds(conn, days=90):
     num_refunds = int(len(orders) * PARAMS["return_rate"])
     refund_orders = random.sample(list(orders), min(num_refunds, len(orders)))
     
+    # Get connector_id for refunds
+    connector_result = conn.execute(text("""
+        SELECT connector_id FROM shopify_orders WHERE tenant_id = :tid LIMIT 1
+    """), {"tid": ONE8_TENANT_ID}).fetchone()
+    connector_id = connector_result[0] if connector_result else None
+    
+    if not connector_id:
+        print("   ⚠️  No connector_id found, skipping refunds")
+        return
+    
     # Collect refund data
     refunds_batch = []
     for order in refund_orders:
@@ -353,12 +363,19 @@ def generate_refunds(conn, days=90):
             )
         )
         
+        external_refund_id = f"refund_{random.randint(1000000, 9999999)}"
+        
         refunds_batch.append({
             "id": str(uuid.uuid4()),
             "tenant_id": ONE8_TENANT_ID,
-            "shopify_order_id": order[1],
+            "connector_id": connector_id,
+            "external_refund_id": external_refund_id,
+            "order_id": order[0],
+            "external_order_id": order[1],
             "refund_amount": order[2],
-            "processed_at": refund_date,
+            "reason": random.choice(["customer_request", "defective", "size_issue", "changed_mind"]),
+            "refund_created_at": refund_date,
+            "synced_at": refund_date,
             "created_at": refund_date,
         })
     
@@ -366,9 +383,11 @@ def generate_refunds(conn, days=90):
     if refunds_batch:
         conn.execute(text("""
             INSERT INTO shopify_refunds (
-                id, tenant_id, shopify_order_id, refund_amount, processed_at, created_at
+                id, tenant_id, connector_id, external_refund_id, order_id, external_order_id,
+                refund_amount, reason, refund_created_at, synced_at, created_at
             ) VALUES (
-                :id, :tenant_id, :shopify_order_id, :refund_amount, :processed_at, :created_at
+                :id, :tenant_id, :connector_id, :external_refund_id, :order_id, :external_order_id,
+                :refund_amount, :reason, :refund_created_at, :synced_at, :created_at
             )
         """), refunds_batch)
         conn.commit()
@@ -381,14 +400,24 @@ def generate_ad_spend(conn, days=90):
     
     print(f"\n💰 Generating {days} days of ad spend...")
     
+    # Get connector_id for ad spends
+    connector_result = conn.execute(text("""
+        SELECT id FROM connector_integrations WHERE tenant_id = :tid LIMIT 1
+    """), {"tid": ONE8_TENANT_ID}).fetchone()
+    connector_id = connector_result[0] if connector_result else None
+    
+    if not connector_id:
+        print("   ⚠️  No connector_id found, skipping ad spend")
+        return
+    
     try:
         # Clean up existing ad spend first
         result = conn.execute(text("""
-            DELETE FROM meta_ad_spend WHERE tenant_id = :tid
+            DELETE FROM meta_ad_spends WHERE tenant_id = :tid
         """), {"tid": ONE8_TENANT_ID})
         deleted_meta = result.rowcount
         result = conn.execute(text("""
-            DELETE FROM google_ad_spend WHERE tenant_id = :tid
+            DELETE FROM google_ad_spends WHERE tenant_id = :tid
         """), {"tid": ONE8_TENANT_ID})
         deleted_google = result.rowcount
         if deleted_meta + deleted_google > 0:
@@ -402,6 +431,19 @@ def generate_ad_spend(conn, days=90):
     
     end_date = datetime.utcnow()
     
+    # Meta/Google campaign names for realistic data
+    meta_campaigns = [
+        "TOF_Prospecting_Lookalike",
+        "MOF_Retargeting_Engagement",
+        "BOF_Conversion_Purchase",
+    ]
+    
+    google_campaigns = [
+        "Search_Brand_One8",
+        "Search_Generic_Sportswear",
+        "Display_Prospecting_Sports",
+    ]
+    
     meta_total = Decimal("0")
     google_total = Decimal("0")
     meta_batch = []
@@ -410,62 +452,74 @@ def generate_ad_spend(conn, days=90):
     for day_offset in range(days):
         ad_date = (end_date - timedelta(days=day_offset)).date()
         
-        # Meta ads (higher spend)
-        meta_spend = Decimal(str(random.randint(
+        # Meta ads - distribute spend across campaigns
+        daily_meta_total = Decimal(str(random.randint(
             PARAMS["daily_meta_spend_min"],
             PARAMS["daily_meta_spend_max"]
         )))
-        meta_impressions = int(meta_spend * random.uniform(40, 60))  # CPM ~₹25
-        meta_clicks = int(meta_impressions * random.uniform(0.015, 0.025))  # 1.5-2.5% CTR
         
-        meta_batch.append({
-            "id": str(uuid.uuid4()),
-            "tenant_id": ONE8_TENANT_ID,
-            "date": ad_date,
-            "spend": meta_spend,
-            "impressions": meta_impressions,
-            "clicks": meta_clicks,
-            "created_at": datetime.utcnow(),
-        })
+        for campaign in meta_campaigns:
+            campaign_spend = daily_meta_total / len(meta_campaigns)
+            meta_batch.append({
+                "id": str(uuid.uuid4()),
+                "tenant_id": ONE8_TENANT_ID,
+                "connector_id": connector_id,
+                "external_campaign_id": f"meta_{campaign}_{ad_date.strftime('%Y%m')}",
+                "campaign_name": campaign,
+                "spend_date": ad_date,
+                "currency": "INR",
+                "spend_amount": float(campaign_spend),
+                "synced_at": datetime.utcnow(),
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            })
         
-        meta_total += meta_spend
+        meta_total += daily_meta_total
         
-        # Google ads (lower spend)
-        google_spend = Decimal(str(random.randint(
+        # Google ads - distribute spend across campaigns
+        daily_google_total = Decimal(str(random.randint(
             PARAMS["daily_google_spend_min"],
             PARAMS["daily_google_spend_max"]
         )))
-        google_impressions = int(google_spend * random.uniform(30, 50))  # Higher CPM
-        google_clicks = int(google_impressions * random.uniform(0.02, 0.035))  # Higher CTR
         
-        google_batch.append({
-            "id": str(uuid.uuid4()),
-            "tenant_id": ONE8_TENANT_ID,
-            "date": ad_date,
-            "spend": google_spend,
-            "impressions": google_impressions,
-            "clicks": google_clicks,
-            "created_at": datetime.utcnow(),
-        })
+        for campaign in google_campaigns:
+            campaign_spend = daily_google_total / len(google_campaigns)
+            google_batch.append({
+                "id": str(uuid.uuid4()),
+                "tenant_id": ONE8_TENANT_ID,
+                "connector_id": connector_id,
+                "external_campaign_id": f"google_{campaign}_{ad_date.strftime('%Y%m')}",
+                "campaign_name": campaign,
+                "spend_date": ad_date,
+                "currency": "INR",
+                "spend_amount": float(campaign_spend),
+                "synced_at": datetime.utcnow(),
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            })
         
-        google_total += google_spend
+        google_total += daily_google_total
     
     # Bulk insert ad spend
     if meta_batch:
         conn.execute(text("""
-            INSERT INTO meta_ad_spend (
-                id, tenant_id, date, spend, impressions, clicks, created_at
+            INSERT INTO meta_ad_spends (
+                id, tenant_id, connector_id, external_campaign_id, campaign_name,
+                spend_date, currency, spend_amount, synced_at, created_at, updated_at
             ) VALUES (
-                :id, :tenant_id, :date, :spend, :impressions, :clicks, :created_at
+                :id, :tenant_id, :connector_id, :external_campaign_id, :campaign_name,
+                :spend_date, :currency, :spend_amount, :synced_at, :created_at, :updated_at
             )
         """), meta_batch)
     
     if google_batch:
         conn.execute(text("""
-            INSERT INTO google_ad_spend (
-                id, tenant_id, date, spend, impressions, clicks, created_at
+            INSERT INTO google_ad_spends (
+                id, tenant_id, connector_id, external_campaign_id, campaign_name,
+                spend_date, currency, spend_amount, synced_at, created_at, updated_at
             ) VALUES (
-                :id, :tenant_id, :date, :spend, :impressions, :clicks, :created_at
+                :id, :tenant_id, :connector_id, :external_campaign_id, :campaign_name,
+                :spend_date, :currency, :spend_amount, :synced_at, :created_at, :updated_at
             )
         """), google_batch)
     

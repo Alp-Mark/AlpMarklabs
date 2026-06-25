@@ -80,6 +80,11 @@ SMTP_FROM_EMAIL=noreply@alpmark.io
 ENABLE_SIMULATIONS=true
 ENABLE_CUSTOM_SEGMENTS=true
 
+# Optimization Engine (Phase 2 Beta Launch)
+# Set to "true" to enable ML-based budget optimization recommendations
+# Set to "false" to disable (recommended for initial deployment)
+ENABLE_OPTIMIZATION_ENGINE=false
+
 # Frontend URL (for CORS)
 FRONTEND_URL=https://your-frontend.railway.app
 ```

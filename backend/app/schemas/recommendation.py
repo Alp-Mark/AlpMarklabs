@@ -37,6 +37,20 @@ class RecommendationResponse(BaseModel):
         default_factory=list,
         description="Connectors used: ['shopify', 'meta', 'google_ads']",
     )
+    source: str = Field(
+        default="threshold",
+        description="Source: 'threshold' (rule-based) or 'optimization' (ML-based)",
+    )
+    optimization_metadata: dict | None = Field(
+        default=None,
+        description=(
+            "Optimization details: conversions, lift_pct, model R²"
+        ),
+    )
+    fitted_model_id: UUID | None = Field(
+        default=None,
+        description="FK to fitted model (for ML-based recommendations)",
+    )
     data_freshness_context: str
     status: str = Field(
         ...,

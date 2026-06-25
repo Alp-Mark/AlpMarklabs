@@ -20,7 +20,7 @@ Example:
     # Returns optimal allocation: {"meta": 45%, "google": 55%} with expected lift
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -30,6 +30,7 @@ from backend.app.db.models import (
     GoogleAdSpend,
     MetaAdSpend,
     OptimizationRun,
+    Recommendation,
     ShopifyOrder,
 )
 from scipy.optimize import minimize
@@ -76,6 +77,7 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         self.google_curve: HillCurve | None = None
         self.current_budget: float | None = None
         self.tenant_id: UUID | None = None
+        self.lookback_days: int = 90  # Default lookback period
         self.optimization_run_id: UUID | None = None
         self.optimization_result: dict[str, Any] | None = None
     
@@ -109,6 +111,10 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             ValueError: If insufficient data (< 14 days with spend)
         """
         from datetime import UTC
+        
+        # Store parameters for later use
+        self.tenant_id = tenant_id
+        self.lookback_days = days
         
         end_date = datetime.now(UTC).date()
         start_date = end_date - timedelta(days=days)
@@ -243,9 +249,6 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             for d in recent_dates
         )
         self.current_budget = recent_total_spend / 7  # Average daily budget
-        
-        # Store tenant_id for later use in train_models
-        self.tenant_id = tenant_id
         
         return {
             "meta": {
@@ -630,6 +633,160 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             "domain": "acquisition",
             "priority": priority,
         }
+    
+    def create_recommendation_record(self) -> Recommendation:
+        """Create a Recommendation database record from optimization result.
+        
+        This method creates an actual user-facing recommendation with
+        source='optimization' and links to the fitted models.
+        
+        Returns:
+            Recommendation: Persisted recommendation record
+        
+        Raises:
+            ValueError: If optimization_result is None
+            RuntimeError: If required data is missing
+        """
+        if self.optimization_result is None:
+            raise ValueError("Must run optimization before creating recommendation")
+        
+        if self.tenant_id is None:
+            raise RuntimeError("tenant_id not set")
+        
+        if self.optimization_run_id is None:
+            raise RuntimeError("optimization_run_id not set")
+        
+        opt = self.optimization_result
+        
+        # Get model metadata for optimization_metadata field
+        meta_model = self.db.query(FittedModel).filter(
+            FittedModel.optimization_run_id == self.optimization_run_id,
+            FittedModel.model_type == "meta_saturation_curve",
+        ).first()
+        
+        google_model = self.db.query(FittedModel).filter(
+            FittedModel.optimization_run_id == self.optimization_run_id,
+            FittedModel.model_type == "google_saturation_curve",
+        ).first()
+        
+        # Build optimization metadata
+        optimization_metadata = {
+            "optimization_run_id": str(self.optimization_run_id),
+            "expected_conversions": opt["expected_conversions"],
+            "current_conversions": opt["current_conversions"],
+            "lift_pct": opt["lift_pct"],
+            "meta_allocation": {
+                "spend": opt["meta_spend"],
+                "pct": opt["meta_pct"],
+            },
+            "google_allocation": {
+                "spend": opt["google_spend"],
+                "pct": opt["google_pct"],
+            },
+            "model_accuracy": {
+                "meta_r2": (
+                    meta_model.accuracy_metrics.get("r2")
+                    if meta_model and meta_model.accuracy_metrics
+                    else None
+                ),
+                "google_r2": (
+                    google_model.accuracy_metrics.get("r2")
+                    if google_model and google_model.accuracy_metrics
+                    else None
+                ),
+            },
+        }
+        
+        # Calculate confidence score (average of model R² scores)
+        confidence_score = 0.5  # default
+        if (
+            meta_model
+            and meta_model.accuracy_metrics
+            and google_model
+            and google_model.accuracy_metrics
+        ):
+            meta_r2 = meta_model.accuracy_metrics.get("r2", 0.0)
+            google_r2 = google_model.accuracy_metrics.get("r2", 0.0)
+            confidence_score = (meta_r2 + google_r2) / 2
+        
+        # Map numeric confidence to categorical level
+        confidence_level = self._map_confidence_to_level(confidence_score)
+        
+        # Build signal summary and suggested action
+        signal_summary = (
+            f"ML optimization suggests {opt['lift_pct']:.1f}% conversion lift "
+            f"by reallocating budget: {opt['meta_pct']:.1f}% Meta, "
+            f"{opt['google_pct']:.1f}% Google"
+        )
+        
+        suggested_action = (
+            f"Adjust Meta to ₹{opt['meta_spend']:,.0f}/day and "
+            f"Google to ₹{opt['google_spend']:,.0f}/day"
+        )
+        
+        # Calculate priority (1-100 scale based on lift)
+        if opt["lift_pct"] > 10:
+            priority = 90  # high
+        elif opt["lift_pct"] > 5:
+            priority = 50  # medium
+        else:
+            priority = 20  # low
+        
+        # Create recommendation
+        recommendation = Recommendation(
+            tenant_id=self.tenant_id,
+            rule_id="OPT-BUDGET-001",  # Optimization-based rule ID
+            domain="acquisition",
+            snapshot_date=date.today(),
+            affected_area="Meta Ads, Google Ads",
+            signal_summary=signal_summary,
+            suggested_action=suggested_action,
+            estimated_impact=opt["lift_pct"],  # lift percentage
+            confidence_level=confidence_level,
+            confidence_score=confidence_score,
+            data_freshness_context=(
+                f"Based on {self.lookback_days} days of ad spend "
+                f"and conversion data"
+            ),
+            status="new",
+            priority=priority,
+            impact_score=opt["lift_pct"],  # use lift as impact score
+            evidence={
+                "current_conversions": opt["current_conversions"],
+                "expected_conversions": opt["expected_conversions"],
+                "meta_spend": opt["meta_spend"],
+                "google_spend": opt["google_spend"],
+            },
+            data_sources=["meta", "google_ads", "shopify"],
+            source="optimization",
+            optimization_metadata=optimization_metadata,
+            fitted_model_id=meta_model.id if meta_model else None,
+        )
+        
+        self.db.add(recommendation)
+        self.db.flush()  # Get the ID without committing
+        
+        return recommendation
+    
+    def _map_confidence_to_level(self, confidence_score: float) -> str:
+        """Map numeric confidence score (0-1) to categorical level.
+        
+        Args:
+            confidence_score: Numeric confidence (0.0 to 1.0)
+        
+        Returns:
+            Confidence level: very_low, low, medium, high, very_high
+        """
+        if confidence_score < 0.3:
+            return "very_low"
+        elif confidence_score < 0.5:
+            return "low"
+        elif confidence_score < 0.7:
+            return "medium"
+        elif confidence_score < 0.9:
+            return "high"
+        else:
+            return "very_high"
     
     def _calculate_r2(
         self,

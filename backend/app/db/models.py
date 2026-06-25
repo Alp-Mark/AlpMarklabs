@@ -1702,6 +1702,16 @@ class Recommendation(Base):
     source: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="threshold"
     )
+    # Phase 2: Optimization metadata for ML-generated recommendations
+    optimization_metadata: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="Optimization details: conversions, lift, accuracy",
+    )
+    fitted_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("fitted_models.id"), nullable=True,
+        comment="FK to the fitted model that generated this recommendation"
+    )
     review_note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     # FR-076 / T-062: Stamps when recommendation transitions to "approved" status.
     approved_at: Mapped[datetime | None] = mapped_column(
@@ -1748,6 +1758,9 @@ class Recommendation(Base):
     )
 
     tenant: Mapped[Tenant] = relationship(back_populates="recommendations")
+    fitted_model: Mapped[FittedModel | None] = relationship(
+        "FittedModel", foreign_keys=[fitted_model_id]
+    )
 
 
 class TenantRuleThreshold(Base):
