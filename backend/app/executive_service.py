@@ -428,10 +428,10 @@ def calculate_executive_overview(
 
     # Business health indicators
     health_indicators = _calculate_health_indicators(
-        net_revenue=net_revenue,
         blended_roas=blended_roas,
         contribution_margin_pct=contribution_margin_pct,
-        revenue_growth_rate=revenue_growth_rate,
+        repeat_purchase_rate=repeat_purchase_rate,
+        return_rate_pct=return_rate_pct,
     )
 
     # Determine overall health
@@ -477,65 +477,120 @@ def calculate_executive_overview(
 
 
 def _calculate_health_indicators(
-    net_revenue: float,
     blended_roas: float | None,
     contribution_margin_pct: float,
-    revenue_growth_rate: float | None,
+    repeat_purchase_rate: float | None,
+    return_rate_pct: float | None,
 ) -> list[BusinessHealthIndicator]:
-    """Calculate business health indicators across key areas."""
+    """
+    Calculate business health indicators across 4 functional areas.
+    
+    Always returns exactly 4 indicators: growth, retention, finance, operations.
+    """
     indicators: list[BusinessHealthIndicator] = []
 
-    # Growth health
-    if revenue_growth_rate is not None:
-        if revenue_growth_rate >= 10:
+    # 1. Growth health (ROAS-based)
+    if blended_roas is not None and blended_roas > 0:
+        if blended_roas >= 3.0:
             growth_status = "healthy"
-            growth_message = (
-                f"Revenue growing at {revenue_growth_rate:.1f}% "
-                "period-over-period"
-            )
-        elif revenue_growth_rate >= 0:
+            growth_message = f"Blended ROAS at {blended_roas:.1f}x (target: 3.0x+)"
+        elif blended_roas >= 2.0:
             growth_status = "warning"
-            growth_message = f"Revenue growth slowing ({revenue_growth_rate:.1f}%)"
+            growth_message = f"Blended ROAS at {blended_roas:.1f}x (below target)"
         else:
             growth_status = "critical"
-            growth_message = (
-                f"Revenue declining ({revenue_growth_rate:.1f}% period-over-period)"
-            )
-
+            growth_message = f"Blended ROAS critically low at {blended_roas:.1f}x"
+        
         indicators.append(
             BusinessHealthIndicator(
                 area="growth",
                 status=growth_status,
                 status_message=growth_message,
-                primary_metric="revenue_growth_rate",
-                metric_value=revenue_growth_rate,
-                metric_target=10.0,
+                primary_metric="blended_roas",
+                metric_value=blended_roas,
+                metric_target=3.0,
+                metric_unit="ratio",
+            )
+        )
+    else:
+        # No ROAS data available
+        indicators.append(
+            BusinessHealthIndicator(
+                area="growth",
+                status="warning",
+                status_message="No ROAS data available for this area",
+                primary_metric="blended_roas",
+                metric_value=0.0,
+                metric_target=3.0,
+                metric_unit="ratio",
+            )
+        )
+
+    # 2. Retention health (repeat purchase rate)
+    if repeat_purchase_rate is not None and repeat_purchase_rate > 0:
+        if repeat_purchase_rate >= 30.0:
+            retention_status = "healthy"
+            retention_message = (
+                f"Repeat rate at {repeat_purchase_rate:.1f}% (target: 30%+)"
+            )
+        elif repeat_purchase_rate >= 20.0:
+            retention_status = "warning"
+            retention_message = (
+                f"Repeat rate at {repeat_purchase_rate:.1f}% (below target)"
+            )
+        else:
+            retention_status = "critical"
+            retention_message = (
+                f"Repeat rate critically low at {repeat_purchase_rate:.1f}%"
+            )
+        
+        indicators.append(
+            BusinessHealthIndicator(
+                area="retention",
+                status=retention_status,
+                status_message=retention_message,
+                primary_metric="repeat_purchase_rate",
+                metric_value=repeat_purchase_rate,
+                metric_target=30.0,
+                metric_unit="percent",
+            )
+        )
+    else:
+        # No retention data available
+        indicators.append(
+            BusinessHealthIndicator(
+                area="retention",
+                status="warning",
+                status_message="No data available for this area",
+                primary_metric="repeat_purchase_rate",
+                metric_value=0.0,
+                metric_target=30.0,
                 metric_unit="percent",
             )
         )
 
-    # Profitability health
+    # 3. Finance health (contribution margin)
     if contribution_margin_pct >= 35:
-        profit_status = "healthy"
-        profit_message = (
+        finance_status = "healthy"
+        finance_message = (
             f"Contribution margin at {contribution_margin_pct:.1f}% (target: 35%+)"
         )
     elif contribution_margin_pct >= 25:
-        profit_status = "warning"
-        profit_message = (
+        finance_status = "warning"
+        finance_message = (
             f"Contribution margin at {contribution_margin_pct:.1f}% (below target)"
         )
     else:
-        profit_status = "critical"
-        profit_message = (
+        finance_status = "critical"
+        finance_message = (
             f"Contribution margin critically low at {contribution_margin_pct:.1f}%"
         )
 
     indicators.append(
         BusinessHealthIndicator(
             area="finance",
-            status=profit_status,
-            status_message=profit_message,
+            status=finance_status,
+            status_message=finance_message,
             primary_metric="contribution_margin_pct",
             metric_value=contribution_margin_pct,
             metric_target=35.0,
@@ -543,27 +598,46 @@ def _calculate_health_indicators(
         )
     )
 
-    # Marketing efficiency health
-    if blended_roas is not None:
-        if blended_roas >= 3.0:
-            roas_status = "healthy"
-            roas_message = f"Blended ROAS at {blended_roas:.2f}x (target: 3.0x+)"
-        elif blended_roas >= 2.0:
-            roas_status = "warning"
-            roas_message = f"Blended ROAS at {blended_roas:.2f}x (below target)"
+    # 4. Operations health (return rate - lower is better)
+    if return_rate_pct is not None and return_rate_pct >= 0:
+        if return_rate_pct <= 3.0:
+            operations_status = "healthy"
+            operations_message = (
+                f"Return rate at {return_rate_pct:.1f}% (target: <3%)"
+            )
+        elif return_rate_pct <= 5.0:
+            operations_status = "warning"
+            operations_message = (
+                f"Return rate at {return_rate_pct:.1f}% (above target)"
+            )
         else:
-            roas_status = "critical"
-            roas_message = f"Blended ROAS critically low at {blended_roas:.2f}x"
-
+            operations_status = "critical"
+            operations_message = (
+                f"Return rate critically high at {return_rate_pct:.1f}%"
+            )
+        
         indicators.append(
             BusinessHealthIndicator(
-                area="growth",
-                status=roas_status,
-                status_message=roas_message,
-                primary_metric="blended_roas",
-                metric_value=blended_roas,
+                area="operations",
+                status=operations_status,
+                status_message=operations_message,
+                primary_metric="return_rate_pct",
+                metric_value=return_rate_pct,
                 metric_target=3.0,
-                metric_unit="ratio",
+                metric_unit="percent",
+            )
+        )
+    else:
+        # No operations data available
+        indicators.append(
+            BusinessHealthIndicator(
+                area="operations",
+                status="warning",
+                status_message="No data available for this area",
+                primary_metric="return_rate_pct",
+                metric_value=0.0,
+                metric_target=3.0,
+                metric_unit="percent",
             )
         )
 
