@@ -6062,7 +6062,7 @@ def list_warehouse_inventory(
             detail="Tenant not found.",
         )
 
-    snapshot_date = date.today()
+    snapshot_date = datetime.now(UTC).date()
     inventory_items = db.scalars(
         select(InventoryRiskSnapshot).where(
             InventoryRiskSnapshot.tenant_id == tenant_id,
@@ -6170,7 +6170,7 @@ def get_sku_stockout_impact(
             detail="Tenant not found.",
         )
 
-    snapshot_date = date.today()
+    snapshot_date = datetime.now(UTC).date()
     sku_snapshots = db.scalars(
         select(InventoryRiskSnapshot).where(
             InventoryRiskSnapshot.tenant_id == tenant_id,
@@ -6248,7 +6248,7 @@ def get_sku_logistics_costs(
             detail="Tenant not found.",
         )
 
-    snapshot_date = date.today()
+    snapshot_date = datetime.now(UTC).date()
     sku_snapshots = db.scalars(
         select(InventoryRiskSnapshot).where(
             InventoryRiskSnapshot.tenant_id == tenant_id,
@@ -10487,7 +10487,7 @@ def get_executive_overview(
 
     # Default to last 90 days if no period specified
     if period_end is None:
-        period_end = date.today()
+        period_end = datetime.now(UTC).date()
     if period_start is None:
         period_start = period_end - timedelta(days=90)
 
@@ -10559,7 +10559,7 @@ def get_growth_dashboard(
 
     # Default to last 90 days if no period specified
     if period_end is None:
-        period_end = date.today()
+        period_end = datetime.now(UTC).date()
     if period_start is None:
         period_start = period_end - timedelta(days=90)
 
@@ -10630,7 +10630,7 @@ def get_retention_dashboard(
 
     # Default period: last 90 days
     if period_end is None:
-        period_end = date.today()
+        period_end = datetime.now(UTC).date()
     if period_start is None:
         period_start = period_end - timedelta(days=90)
 
