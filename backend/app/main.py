@@ -55,6 +55,7 @@ from backend.app.db.models import (
     Notification,
     NotificationRoutingSetting,
     OperationalImpactSnapshot,
+    OptimizationStrategy,
     PasswordResetToken,
     PrivacyRequest,
     Recommendation,
