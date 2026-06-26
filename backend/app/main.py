@@ -2589,6 +2589,132 @@ def trigger_optimization_engine(
         )
 
 
+@app.post("/admin/optimization-strategies/seed")
+def seed_optimization_strategies_endpoint(
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> dict[str, Any]:
+    """Seed optimization strategies for One8 demo tenant and enable budget allocation (super-admin only)."""
+    try:
+        # Find One8 tenant
+        tenant = db.scalar(
+            select(Tenant).where(Tenant.slug == "one8")
+        )
+        
+        if not tenant:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="One8 tenant not found",
+            )
+        
+        # Delete existing strategies for clean slate
+        existing_count = db.scalar(
+            select(func.count())
+            .select_from(OptimizationStrategy)
+            .where(OptimizationStrategy.tenant_id == tenant.id)
+        )
+        
+        if existing_count and existing_count > 0:
+            db.execute(
+                delete(OptimizationStrategy).where(
+                    OptimizationStrategy.tenant_id == tenant.id
+                )
+            )
+        
+        # Create 4 optimization strategies
+        import uuid
+        strategies = [
+            OptimizationStrategy(
+                id=uuid.uuid4(),
+                tenant_id=tenant.id,
+                domain="acquisition",
+                strategy_name="budget_allocation",
+                strategy_type="hill_curve_saturation",
+                is_enabled=True,  # Enable this one by default
+                config={
+                    "description": "Optimize ad spend allocation across channels",
+                    "min_budget_per_channel": 1000.0,
+                    "max_budget_shift_pct": 0.25,
+                    "lookback_days": 90,
+                    "confidence_threshold": 0.7,
+                },
+            ),
+            OptimizationStrategy(
+                id=uuid.uuid4(),
+                tenant_id=tenant.id,
+                domain="finance",
+                strategy_name="pricing_optimization",
+                strategy_type="elasticity_model",
+                is_enabled=False,
+                config={
+                    "description": "Optimize product pricing based on demand elasticity",
+                    "min_margin_pct": 0.30,
+                    "max_price_change_pct": 0.15,
+                    "elasticity_lookback_days": 60,
+                    "confidence_threshold": 0.75,
+                },
+            ),
+            OptimizationStrategy(
+                id=uuid.uuid4(),
+                tenant_id=tenant.id,
+                domain="retention",
+                strategy_name="retention_campaign_targeting",
+                strategy_type="propensity_scoring",
+                is_enabled=False,
+                config={
+                    "description": "Optimize retention campaign targeting",
+                    "target_segments": ["at_risk", "promising", "lapsed"],
+                    "min_propensity_score": 0.6,
+                    "max_campaign_frequency_days": 14,
+                    "lookback_days": 90,
+                    "confidence_threshold": 0.7,
+                },
+            ),
+            OptimizationStrategy(
+                id=uuid.uuid4(),
+                tenant_id=tenant.id,
+                domain="operations",
+                strategy_name="inventory_reorder_optimization",
+                strategy_type="demand_forecasting",
+                is_enabled=False,
+                config={
+                    "description": "Optimize inventory reorder points",
+                    "forecast_horizon_days": 30,
+                    "safety_stock_multiplier": 1.5,
+                    "max_inventory_value_pct": 0.20,
+                    "min_turnover_ratio": 4.0,
+                    "confidence_threshold": 0.65,
+                },
+            ),
+        ]
+        
+        db.add_all(strategies)
+        db.commit()
+        
+        return {
+            "message": "Optimization strategies seeded successfully",
+            "tenant": tenant.slug,
+            "strategies_created": len(strategies),
+            "enabled_strategies": sum(1 for s in strategies if s.is_enabled),
+            "strategies": [
+                {
+                    "domain": s.domain,
+                    "strategy_name": s.strategy_name,
+                    "is_enabled": s.is_enabled,
+                }
+                for s in strategies
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to seed optimization strategies: {str(e)}",
+        )
+
+
 # ---------------------------------------------------------------------------
 # D4: Super-admin tenant management
 # ---------------------------------------------------------------------------
