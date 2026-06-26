@@ -5,19 +5,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install build dependencies for scipy and other ML packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    gfortran \
-    libopenblas-dev \
-    liblapack-dev \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
-COPY worker/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir numpy>=1.24.0,<2.0.0 && \
+# Install Python dependencies (minimal set for Railway)
+COPY worker/requirements-railway.txt ./requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code (worker needs access to backend for DB models)

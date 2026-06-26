@@ -1,0 +1,9 @@
+# Minimal requirements for Railway deployment (no ML packages)
+# Full requirements with scipy/scikit-learn are in requirements.txt for local dev
+
+celery
+redis
+sqlalchemy
+psycopg[binary]
+boto3
+sentry-sdk[celery]
