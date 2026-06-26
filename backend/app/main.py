@@ -3,7 +3,7 @@ import secrets
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from importlib import import_module
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 from urllib.parse import urlencode
 from uuid import UUID
 
