@@ -34,7 +34,7 @@ from backend.app.db.models import (
     ShopifyOrder,
 )
 from scipy.optimize import minimize
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from worker.app.optimization.models.saturation import HillCurve
@@ -749,12 +749,24 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         else:
             priority = 30  # low
         
+        # Delete existing recommendation for this tenant/rule/date if it exists
+        # (prevents duplicate key error on re-runs)
+        today = date.today()
+        self.db.execute(
+            delete(Recommendation).where(
+                Recommendation.tenant_id == self.tenant_id,
+                Recommendation.rule_id == "OPT-BUDGET-001",
+                Recommendation.snapshot_date == today,
+            )
+        )
+        self.db.flush()
+        
         # Create recommendation
         recommendation = Recommendation(
             tenant_id=self.tenant_id,
             rule_id="OPT-BUDGET-001",  # Optimization-based rule ID
             domain="acquisition",
-            snapshot_date=date.today(),
+            snapshot_date=today,
             affected_area="Meta Ads, Google Ads",
             signal_summary=signal_summary,
             suggested_action=suggested_action,
