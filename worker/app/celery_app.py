@@ -50,9 +50,12 @@ beat_schedule = {
 
 # Add optimization/sync tasks only if scipy is available
 ENABLE_OPTIMIZATION_ENGINE = os.getenv("ENABLE_OPTIMIZATION_ENGINE", "false").lower() == "true"
+print(f"🔍 ENABLE_OPTIMIZATION_ENGINE={os.getenv('ENABLE_OPTIMIZATION_ENGINE', 'false')} -> {ENABLE_OPTIMIZATION_ENGINE}")
 if ENABLE_OPTIMIZATION_ENGINE:
+    print("📦 Attempting to import worker.app.tasks (optimization engine)...")
     try:
         from worker.app import tasks  # noqa: E402, F401
+        print("✅ Successfully imported worker.app.tasks - optimization engine enabled")
         # Add all the other tasks to beat schedule
         beat_schedule.update({
             "connector-sync-scheduler": {
@@ -124,8 +127,14 @@ if ENABLE_OPTIMIZATION_ENGINE:
                 "schedule": SYSTEM_SYNC_CADENCE["daily-data-simulation"],
             },
         })
+        print(f"✅ Added {len(beat_schedule) - 1} optimization engine tasks to schedule")
     except ImportError as e:
-        print(f"Warning: Optimization engine disabled, scipy not available: {e}")
+        print(f"❌ Warning: Optimization engine disabled, scipy not available: {e}")
+else:
+    print("⚠️  Optimization engine disabled (ENABLE_OPTIMIZATION_ENGINE != true)")
+
+print(f"📋 Total scheduled tasks: {len(beat_schedule)}")
+print(f"📋 Task names: {list(beat_schedule.keys())}")
 
 celery_app.conf.update(
     task_track_started=True,
