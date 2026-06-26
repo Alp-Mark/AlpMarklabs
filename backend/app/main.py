@@ -2528,6 +2528,29 @@ def toggle_tenant_feature(
     }
 
 
+@app.post("/admin/demo-data/trigger")
+def trigger_demo_data(
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> dict[str, str | int]:
+    """Manually trigger One8 demo data generation (super-admin only)."""
+    try:
+        # Import here to avoid circular dependency
+        from worker.app.tasks_demo_data import generate_demo_data_one8
+        
+        result = generate_demo_data_one8()
+        return {
+            "message": "Demo data generated successfully",
+            "orders_created": result.get("orders_created", 0),
+            "line_items_created": result.get("line_items_created", 0),
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate demo data: {str(e)}",
+        )
+
+
 # ---------------------------------------------------------------------------
 # D4: Super-admin tenant management
 # ---------------------------------------------------------------------------
