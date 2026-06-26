@@ -2596,37 +2596,40 @@ def seed_optimization_strategies_endpoint(
 ) -> dict[str, Any]:
     """Seed optimization strategies for One8 demo tenant and enable budget allocation (super-admin only)."""
     try:
-        # Find One8 tenant
+        # Use the same One8 tenant ID that demo data uses
+        import uuid
+        ONE8_TENANT_ID = uuid.UUID("23165fa5-150b-4b6c-a637-b3dd24532c4d")
+        
+        # Verify tenant exists
         tenant = db.scalar(
-            select(Tenant).where(Tenant.slug == "one8")
+            select(Tenant).where(Tenant.id == ONE8_TENANT_ID)
         )
         
         if not tenant:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="One8 tenant not found",
+                detail=f"One8 tenant ({ONE8_TENANT_ID}) not found - run demo data generation first",
             )
         
         # Delete existing strategies for clean slate
         existing_count = db.scalar(
             select(func.count())
             .select_from(OptimizationStrategy)
-            .where(OptimizationStrategy.tenant_id == tenant.id)
+            .where(OptimizationStrategy.tenant_id == ONE8_TENANT_ID)
         )
         
         if existing_count and existing_count > 0:
             db.execute(
                 delete(OptimizationStrategy).where(
-                    OptimizationStrategy.tenant_id == tenant.id
+                    OptimizationStrategy.tenant_id == ONE8_TENANT_ID
                 )
             )
         
         # Create 4 optimization strategies
-        import uuid
         strategies = [
             OptimizationStrategy(
                 id=uuid.uuid4(),
-                tenant_id=tenant.id,
+                tenant_id=ONE8_TENANT_ID,
                 domain="acquisition",
                 strategy_name="budget_allocation",
                 strategy_type="hill_curve_saturation",
@@ -2641,7 +2644,7 @@ def seed_optimization_strategies_endpoint(
             ),
             OptimizationStrategy(
                 id=uuid.uuid4(),
-                tenant_id=tenant.id,
+                tenant_id=ONE8_TENANT_ID,
                 domain="finance",
                 strategy_name="pricing_optimization",
                 strategy_type="elasticity_model",
@@ -2656,7 +2659,7 @@ def seed_optimization_strategies_endpoint(
             ),
             OptimizationStrategy(
                 id=uuid.uuid4(),
-                tenant_id=tenant.id,
+                tenant_id=ONE8_TENANT_ID,
                 domain="retention",
                 strategy_name="retention_campaign_targeting",
                 strategy_type="propensity_scoring",
@@ -2672,7 +2675,7 @@ def seed_optimization_strategies_endpoint(
             ),
             OptimizationStrategy(
                 id=uuid.uuid4(),
-                tenant_id=tenant.id,
+                tenant_id=ONE8_TENANT_ID,
                 domain="operations",
                 strategy_name="inventory_reorder_optimization",
                 strategy_type="demand_forecasting",
