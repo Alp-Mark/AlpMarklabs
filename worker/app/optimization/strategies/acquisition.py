@@ -482,7 +482,23 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             conversion_lift = expected_total_conv - current_total_conv
             daily_revenue_impact = conversion_lift * self.aov if hasattr(self, 'aov') else 0.0
             
-            # Build optimization result
+            # Calculate current efficiency metrics (conversions per rupee spent)
+            current_meta_efficiency = current_meta_conv / current_meta if current_meta > 0 else 0.0
+            current_google_efficiency = current_google_conv / current_google if current_google > 0 else 0.0
+            
+            # Calculate optimal efficiency metrics
+            optimal_meta_efficiency = expected_meta_conv / optimal_meta if optimal_meta > 0 else 0.0
+            optimal_google_efficiency = expected_google_conv / optimal_google if optimal_google > 0 else 0.0
+            
+            # Calculate marginal returns (how much each channel responds to additional spend)
+            meta_marginal = self.meta_curve.predict(current_meta * 1.1)[0] - current_meta_conv
+            google_marginal = self.google_curve.predict(current_google * 1.1)[0] - current_google_conv
+            
+            # Determine root cause (which channel is saturated vs has headroom)
+            meta_spend_change = optimal_meta - current_meta
+            google_spend_change = optimal_google - current_google
+            
+            # Build optimization result with rich context
             result = {
                 "meta_spend": float(optimal_meta),
                 "google_spend": float(optimal_google),
@@ -493,6 +509,24 @@ class BudgetAllocationOptimizer(BaseOptimizer):
                 "lift_pct": float(lift_pct),
                 "daily_revenue_impact": float(daily_revenue_impact),
                 "aov": float(self.aov) if hasattr(self, 'aov') else 0.0,
+                # Current state per channel
+                "current_meta_spend": float(current_meta),
+                "current_google_spend": float(current_google),
+                "current_meta_conversions": float(current_meta_conv),
+                "current_google_conversions": float(current_google_conv),
+                # Efficiency metrics (conversions per ₹1000 spent)
+                "current_meta_efficiency": float(current_meta_efficiency * 1000),
+                "current_google_efficiency": float(current_google_efficiency * 1000),
+                "optimal_meta_efficiency": float(optimal_meta_efficiency * 1000),
+                "optimal_google_efficiency": float(optimal_google_efficiency * 1000),
+                # Marginal returns
+                "meta_marginal_return": float(meta_marginal),
+                "google_marginal_return": float(google_marginal),
+                # Spend changes
+                "meta_spend_change": float(meta_spend_change),
+                "google_spend_change": float(google_spend_change),
+                "meta_spend_change_pct": float((meta_spend_change / current_meta * 100) if current_meta > 0 else 0.0),
+                "google_spend_change_pct": float((google_spend_change / current_google * 100) if current_google > 0 else 0.0),
             }
             
             # Store result in instance variable
@@ -681,7 +715,7 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             FittedModel.model_type == "google_saturation_curve",
         ).first()
         
-        # Build optimization metadata
+        # Build optimization metadata with rich channel-level detail
         optimization_metadata = {
             "optimization_run_id": str(self.optimization_run_id),
             "expected_conversions": opt["expected_conversions"],
@@ -690,12 +724,22 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             "daily_revenue_impact": opt.get("daily_revenue_impact", 0.0),
             "aov": opt.get("aov", 0.0),
             "meta_allocation": {
-                "spend": opt["meta_spend"],
-                "pct": opt["meta_pct"],
+                "current_spend": opt.get("current_meta_spend", 0.0),
+                "optimal_spend": opt["meta_spend"],
+                "current_pct": opt.get("current_meta_spend", 0.0) / self.current_budget * 100 if self.current_budget > 0 else 0,
+                "optimal_pct": opt["meta_pct"],
+                "spend_change": opt.get("meta_spend_change", 0.0),
+                "current_efficiency": opt.get("current_meta_efficiency", 0.0),
+                "optimal_efficiency": opt.get("optimal_meta_efficiency", 0.0),
             },
             "google_allocation": {
-                "spend": opt["google_spend"],
-                "pct": opt["google_pct"],
+                "current_spend": opt.get("current_google_spend", 0.0),
+                "optimal_spend": opt["google_spend"],
+                "current_pct": opt.get("current_google_spend", 0.0) / self.current_budget * 100 if self.current_budget > 0 else 0,
+                "optimal_pct": opt["google_pct"],
+                "spend_change": opt.get("google_spend_change", 0.0),
+                "current_efficiency": opt.get("current_google_efficiency", 0.0),
+                "optimal_efficiency": opt.get("optimal_google_efficiency", 0.0),
             },
             "model_accuracy": {
                 "meta_r2": (
@@ -726,17 +770,44 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         # Map numeric confidence to categorical level
         confidence_level = self._map_confidence_to_level(confidence_score)
         
-        # Build signal summary and suggested action
+        # Determine root cause and build rich signal summary
+        meta_change = opt.get("meta_spend_change", 0.0)
+        google_change = opt.get("google_spend_change", 0.0)
+        
+        # Identify which channel is saturated vs has headroom
+        if abs(meta_change) > abs(google_change):
+            if meta_change < 0:
+                root_cause = f"Meta Ads hitting saturation: efficiency declining from {opt.get('current_meta_efficiency', 0):.2f} to {opt.get('optimal_meta_efficiency', 0):.2f} conversions per ₹1k"
+                primary_channel = "Meta"
+                change_direction = "reduce"
+            else:
+                root_cause = f"Meta Ads has untapped potential: could improve from {opt.get('current_meta_efficiency', 0):.2f} to {opt.get('optimal_meta_efficiency', 0):.2f} conversions per ₹1k"
+                primary_channel = "Meta"
+                change_direction = "increase"
+        else:
+            if google_change < 0:
+                root_cause = f"Google Ads hitting saturation: efficiency declining from {opt.get('current_google_efficiency', 0):.2f} to {opt.get('optimal_google_efficiency', 0):.2f} conversions per ₹1k"
+                primary_channel = "Google"
+                change_direction = "reduce"
+            else:
+                root_cause = f"Google Ads has untapped potential: could improve from {opt.get('current_google_efficiency', 0):.2f} to {opt.get('optimal_google_efficiency', 0):.2f} conversions per ₹1k"
+                primary_channel = "Google"
+                change_direction = "increase"
+        
         signal_summary = (
-            f"ML optimization suggests {opt['lift_pct']:.1f}% conversion lift "
-            f"by reallocating budget: {opt['meta_pct']:.1f}% Meta, "
-            f"{opt['google_pct']:.1f}% Google"
+            f"Budget reallocation opportunity detected. {root_cause}. "
+            f"Reallocate to {opt['meta_pct']:.1f}% Meta (₹{opt['meta_spend']:,.0f}/day) "
+            f"and {opt['google_pct']:.1f}% Google (₹{opt['google_spend']:,.0f}/day) "
+            f"for {opt['lift_pct']:.1f}% conversion lift (+{opt.get('daily_revenue_impact', 0):,.0f} ₹/day revenue)"
         )
         
         suggested_action = (
-            f"Adjust Meta to ₹{opt['meta_spend']:,.0f}/day and "
-            f"Google to ₹{opt['google_spend']:,.0f}/day"
+            f"{change_direction.capitalize()} {primary_channel} to ₹{opt['meta_spend' if primary_channel == 'Meta' else 'google_spend']:,.0f}/day "
+            f"(currently ₹{opt.get('current_meta_spend' if primary_channel == 'Meta' else 'current_google_spend', 0):,.0f}/day). "
+            f"Adjust {'Google' if primary_channel == 'Meta' else 'Meta'} to ₹{opt['google_spend' if primary_channel == 'Meta' else 'meta_spend']:,.0f}/day "
+            f"to maintain total budget of ₹{self.current_budget:,.0f}/day"
         )
+
         
         # Calculate priority based on revenue impact
         daily_revenue_impact = opt.get("daily_revenue_impact", 0.0)
@@ -781,13 +852,45 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             priority=priority,
             impact_score=daily_revenue_impact,  # Revenue impact as score
             evidence={
+                # Overall impact
                 "current_conversions": opt["current_conversions"],
                 "expected_conversions": opt["expected_conversions"],
-                "meta_spend": opt["meta_spend"],
-                "google_spend": opt["google_spend"],
+                "lift_pct": opt["lift_pct"],
                 "daily_revenue_impact": opt.get("daily_revenue_impact", 0.0),
                 "aov": opt.get("aov", 0.0),
-                "lift_pct": opt["lift_pct"],
+                # Meta channel detail
+                "meta": {
+                    "current_spend": opt.get("current_meta_spend", 0.0),
+                    "optimal_spend": opt["meta_spend"],
+                    "spend_change": opt.get("meta_spend_change", 0.0),
+                    "spend_change_pct": opt.get("meta_spend_change_pct", 0.0),
+                    "current_conversions": opt.get("current_meta_conversions", 0.0),
+                    "current_efficiency": opt.get("current_meta_efficiency", 0.0),
+                    "optimal_efficiency": opt.get("optimal_meta_efficiency", 0.0),
+                    "marginal_return": opt.get("meta_marginal_return", 0.0),
+                },
+                # Google channel detail
+                "google": {
+                    "current_spend": opt.get("current_google_spend", 0.0),
+                    "optimal_spend": opt["google_spend"],
+                    "spend_change": opt.get("google_spend_change", 0.0),
+                    "spend_change_pct": opt.get("google_spend_change_pct", 0.0),
+                    "current_conversions": opt.get("current_google_conversions", 0.0),
+                    "current_efficiency": opt.get("current_google_efficiency", 0.0),
+                    "optimal_efficiency": opt.get("optimal_google_efficiency", 0.0),
+                    "marginal_return": opt.get("google_marginal_return", 0.0),
+                },
+                # Model quality
+                "model_r2_meta": (
+                    meta_model.accuracy_metrics.get("r2")
+                    if meta_model and meta_model.accuracy_metrics
+                    else None
+                ),
+                "model_r2_google": (
+                    google_model.accuracy_metrics.get("r2")
+                    if google_model and google_model.accuracy_metrics
+                    else None
+                ),
             },
             data_sources=["meta", "google_ads", "shopify"],
             source="optimization",
