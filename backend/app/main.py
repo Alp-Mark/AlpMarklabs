@@ -2555,27 +2555,37 @@ def trigger_demo_data(
 def trigger_optimization_engine(
     _auth: SuperAdminDep,
     db: Session = Depends(get_db),  # noqa: B008
-) -> dict[str, str | int]:
+) -> dict[str, str]:
     """Manually trigger optimization engine to generate recommendations (super-admin only)."""
     try:
-        # Import the optimization engine task
-        from worker.app.tasks import run_optimization_engine_job
+        # Use Celery to send task to worker (which has scipy installed)
+        from worker.app.celery_app import celery_app
         
-        result = run_optimization_engine_job()
+        # Check if optimization engine is enabled
+        import os
+        if os.getenv("ENABLE_OPTIMIZATION_ENGINE", "false").lower() != "true":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Optimization engine is not enabled (set ENABLE_OPTIMIZATION_ENGINE=true)",
+            )
+        
+        # Send task to celery worker
+        task = celery_app.send_task("worker.app.tasks.run_optimization_engine_schedule")
+        
         return {
-            "message": "Optimization engine executed successfully",
-            "tenants_processed": result.get("tenants_processed", 0),
-            "recommendations_generated": result.get("recommendations_generated", 0),
+            "message": "Optimization engine task queued successfully",
+            "task_id": task.id,
+            "status": "Task sent to worker - check celery logs for progress",
         }
     except ImportError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Optimization engine not available (scipy not installed): {str(e)}",
+            detail=f"Celery not available: {str(e)}",
         )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to run optimization engine: {str(e)}",
+            detail=f"Failed to queue optimization engine task: {str(e)}",
         )
 
 

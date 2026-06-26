@@ -46,9 +46,11 @@ def trigger_optimization_engine():
         response.raise_for_status()
         
         data = response.json()
-        print("\n✅ Optimization engine triggered successfully!")
-        print(f"   Tenants processed: {data.get('tenants_processed', 'N/A')}")
-        print(f"   Recommendations generated: {data.get('recommendations_generated', 'N/A')}")
+        print("\n✅ Optimization engine task queued successfully!")
+        print(f"   Task ID: {data.get('task_id', 'N/A')}")
+        print(f"   Status: {data.get('status', 'N/A')}")
+        print("\n💡 Check celery-worker logs on Railway to see progress")
+        print("   Recommendations should appear on frontend within a few minutes")
         
         return 0
         
