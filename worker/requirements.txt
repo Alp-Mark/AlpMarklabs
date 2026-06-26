@@ -3,15 +3,21 @@ celery
 redis
 sqlalchemy
 psycopg[binary]
-numpy
+
+# Install numpy first (needed by scipy)
+numpy>=1.24.0,<2.0.0
 
 # Optimization Engine Dependencies
-scipy==1.11.4
-scikit-learn==1.3.2
-scikit-optimize==0.9.0
-ortools==9.15.6755
-statsmodels==0.14.4
-prophet==1.1.5
+# Using version ranges that have pre-built wheels for most platforms
+scipy>=1.11.0,<1.12.0
+scikit-learn>=1.3.0,<1.4.0
+statsmodels>=0.14.0,<0.15.0
+
+# Optional heavy packages - commented out for Railway deployment
+# Uncomment if running on environment with build tools
+# scikit-optimize==0.9.0
+# ortools==9.15.6755
+# prophet==1.1.5
 
 # AWS Integration
 boto3==1.34.34
