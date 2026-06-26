@@ -2551,6 +2551,34 @@ def trigger_demo_data(
         )
 
 
+@app.post("/admin/optimization-engine/trigger")
+def trigger_optimization_engine(
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> dict[str, str | int]:
+    """Manually trigger optimization engine to generate recommendations (super-admin only)."""
+    try:
+        # Import the optimization engine task
+        from worker.app.tasks import run_optimization_engine_job
+        
+        result = run_optimization_engine_job()
+        return {
+            "message": "Optimization engine executed successfully",
+            "tenants_processed": result.get("tenants_processed", 0),
+            "recommendations_generated": result.get("recommendations_generated", 0),
+        }
+    except ImportError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Optimization engine not available (scipy not installed): {str(e)}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to run optimization engine: {str(e)}",
+        )
+
+
 # ---------------------------------------------------------------------------
 # D4: Super-admin tenant management
 # ---------------------------------------------------------------------------
