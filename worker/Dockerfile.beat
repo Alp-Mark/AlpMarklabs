@@ -26,4 +26,4 @@ COPY worker ./worker
 
 ENV REDIS_URL=redis://redis:6379/0
 
-CMD ["celery", "-A", "worker.app.celery_app:celery_app", "worker", "--loglevel=info"]
+CMD ["celery", "-A", "worker.app.celery_app:celery_app", "beat", "--loglevel=info"]
