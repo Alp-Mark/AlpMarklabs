@@ -2535,10 +2535,10 @@ def trigger_demo_data(
 ) -> dict[str, str | int]:
     """Manually trigger One8 demo data generation (super-admin only)."""
     try:
-        # Import here to avoid circular dependency
-        from worker.app.tasks_demo_data import generate_demo_data_one8
+        # Import the core logic (no celery dependency needed)
+        from worker.app.tasks_demo_data import run_demo_data_generation
         
-        result = generate_demo_data_one8()
+        result = run_demo_data_generation()
         return {
             "message": "Demo data generated successfully",
             "orders_created": result.get("orders_created", 0),

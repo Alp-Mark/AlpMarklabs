@@ -26,16 +26,11 @@ from worker.app.celery_app import celery_app
 ONE8_TENANT_ID = "23165fa5-150b-4b6c-a637-b3dd24532c4d"
 
 
-@celery_app.task(name="worker.app.tasks.generate_demo_data_one8")
-def generate_demo_data_one8():
+def run_demo_data_generation():
     """
-    Generate 6 hours worth of fresh demo data for One8 tenant.
+    Core logic for demo data generation (no celery dependency).
     
-    Creates realistic business activity:
-    - 80-120 new orders
-    - Ad spend updates (Meta + Google)
-    - Inventory movement
-    - All snapshot tables updated
+    Can be called from celery task OR directly from API endpoint.
     
     Returns:
         dict: Summary of generated data
@@ -121,6 +116,16 @@ def generate_demo_data_one8():
         raise
     finally:
         db.close()
+
+
+@celery_app.task(name="worker.app.tasks.generate_demo_data_one8")
+def generate_demo_data_one8():
+    """
+    Celery task wrapper for demo data generation.
+    
+    Delegates to run_demo_data_generation() for actual logic.
+    """
+    return run_demo_data_generation()
 
 
 def _generate_orders(db, connector_id: str, num_orders: int) -> dict:
