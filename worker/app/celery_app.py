@@ -36,7 +36,96 @@ celery_app = Celery(
 )
 
 # Import tasks to register them BEFORE configuring beat schedule
-from worker.app import tasks, tasks_demo_data  # noqa: E402, F401
+# Only import tasks_demo_data by default (no scipy dependency)
+# tasks.py requires scipy, so only import when optimization engine is enabled
+from worker.app import tasks_demo_data  # noqa: E402, F401
+
+# Build beat schedule based on what's available
+beat_schedule = {
+    "demo-data-generation-6h": {
+        "task": "worker.app.tasks.generate_demo_data_one8",
+        "schedule": SYSTEM_SYNC_CADENCE["demo-data-generation-6h"],
+    },
+}
+
+# Add optimization/sync tasks only if scipy is available
+ENABLE_OPTIMIZATION_ENGINE = os.getenv("ENABLE_OPTIMIZATION_ENGINE", "false").lower() == "true"
+if ENABLE_OPTIMIZATION_ENGINE:
+    try:
+        from worker.app import tasks  # noqa: E402, F401
+        # Add all the other tasks to beat schedule
+        beat_schedule.update({
+            "connector-sync-scheduler": {
+                "task": "worker.app.tasks.run_connector_sync_schedule",
+                "schedule": SYSTEM_SYNC_CADENCE["connector-sync-scheduler"],
+            },
+            "connector-token-expiry-monitor": {
+                "task": "worker.app.tasks.run_token_expiry_monitoring_schedule",
+                "schedule": SYSTEM_SYNC_CADENCE["connector-token-expiry-monitor"],
+            },
+            "executive-kpi-computation-schedule": {
+                "task": "worker.app.tasks.run_executive_kpi_computation_schedule",
+                "schedule": SYSTEM_SYNC_CADENCE["executive-kpi-computation-schedule"],
+            },
+            "acquisition-metrics-computation-schedule": {
+                "task": "worker.app.tasks.run_acquisition_metrics_computation_schedule",
+                "schedule": SYSTEM_SYNC_CADENCE["acquisition-metrics-computation-schedule"],
+            },
+            "retention-cohort-computation-schedule": {
+                "task": "worker.app.tasks.run_retention_cohort_computation_schedule",
+                "schedule": SYSTEM_SYNC_CADENCE["retention-cohort-computation-schedule"],
+            },
+            "retention-segment-computation-schedule": {
+                "task": "worker.app.tasks.run_retention_segment_computation_schedule",
+                "schedule": SYSTEM_SYNC_CADENCE["retention-segment-computation-schedule"],
+            },
+            "finance-cost-drift-schedule": {
+                "task": "worker.app.tasks.run_finance_cost_drift_schedule",
+                "schedule": SYSTEM_SYNC_CADENCE["finance-cost-drift-schedule"],
+            },
+            "inventory-risk-schedule": {
+                "task": "worker.app.tasks.run_inventory_risk_schedule",
+                "schedule": SYSTEM_SYNC_CADENCE["inventory-risk-schedule"],
+            },
+            "operational-impact-schedule": {
+                "task": "worker.app.tasks.run_operational_impact_schedule",
+                "schedule": SYSTEM_SYNC_CADENCE["operational-impact-schedule"],
+            },
+            "rule-engine-schedule": {
+                "task": "worker.app.tasks.run_rule_engine_schedule",
+                "schedule": SYSTEM_SYNC_CADENCE["rule-engine-schedule"],
+            },
+            "threshold-suggestion-schedule": {
+                "task": "worker.app.tasks.run_threshold_suggestion_schedule",
+                "schedule": SYSTEM_SYNC_CADENCE["threshold-suggestion-schedule"],
+            },
+            "shopify-order-sync-schedule": {
+                "task": "worker.app.tasks.run_shopify_order_sync_schedule",
+                "schedule": SOURCE_SYNC_CADENCE["shopify-order-sync-schedule"],
+            },
+            "shopify-inventory-sync-schedule": {
+                "task": "worker.app.tasks.run_shopify_inventory_sync_schedule",
+                "schedule": SOURCE_SYNC_CADENCE["shopify-inventory-sync-schedule"],
+            },
+            "meta-spend-sync-schedule": {
+                "task": "worker.app.tasks.run_meta_spend_sync_schedule",
+                "schedule": SOURCE_SYNC_CADENCE["meta-spend-sync-schedule"],
+            },
+            "google-spend-sync-schedule": {
+                "task": "worker.app.tasks.run_google_spend_sync_schedule",
+                "schedule": SOURCE_SYNC_CADENCE["google-spend-sync-schedule"],
+            },
+            "run-optimization-engine": {
+                "task": "worker.app.tasks.run_optimization_engine_schedule",
+                "schedule": SYSTEM_SYNC_CADENCE["run-optimization-engine"],
+            },
+            "daily-data-simulation": {
+                "task": "worker.app.tasks.run_daily_data_simulation_schedule",
+                "schedule": SYSTEM_SYNC_CADENCE["daily-data-simulation"],
+            },
+        })
+    except ImportError as e:
+        print(f"Warning: Optimization engine disabled, scipy not available: {e}")
 
 celery_app.conf.update(
     task_track_started=True,
@@ -44,82 +133,5 @@ celery_app.conf.update(
     # SSL/TLS configuration for Upstash Redis (or any Redis with TLS)
     broker_use_ssl={"ssl_cert_reqs": "none"} if "upstash.io" in REDIS_URL else None,
     redis_backend_use_ssl={"ssl_cert_reqs": "none"} if "upstash.io" in REDIS_URL else None,
-    beat_schedule={
-        "connector-sync-scheduler": {
-            "task": "worker.app.tasks.run_connector_sync_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE["connector-sync-scheduler"],
-        },
-        "connector-token-expiry-monitor": {
-            "task": "worker.app.tasks.run_token_expiry_monitoring_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE["connector-token-expiry-monitor"],
-        },
-        "executive-kpi-computation-schedule": {
-            "task": "worker.app.tasks.run_executive_kpi_computation_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE[
-                "executive-kpi-computation-schedule"
-            ],
-        },
-        "acquisition-metrics-computation-schedule": {
-            "task": "worker.app.tasks.run_acquisition_metrics_computation_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE[
-                "acquisition-metrics-computation-schedule"
-            ],
-        },
-        "retention-cohort-computation-schedule": {
-            "task": "worker.app.tasks.run_retention_cohort_computation_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE["retention-cohort-computation-schedule"],
-        },
-        "retention-segment-computation-schedule": {
-            "task": "worker.app.tasks.run_retention_segment_computation_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE["retention-segment-computation-schedule"],
-        },
-        "finance-cost-drift-schedule": {
-            "task": "worker.app.tasks.run_finance_cost_drift_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE["finance-cost-drift-schedule"],
-        },
-        "inventory-risk-schedule": {
-            "task": "worker.app.tasks.run_inventory_risk_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE["inventory-risk-schedule"],
-        },
-        "operational-impact-schedule": {
-            "task": "worker.app.tasks.run_operational_impact_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE["operational-impact-schedule"],
-        },
-        "rule-engine-schedule": {
-            "task": "worker.app.tasks.run_rule_engine_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE["rule-engine-schedule"],
-        },
-        "threshold-suggestion-schedule": {
-            "task": "worker.app.tasks.run_threshold_suggestion_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE["threshold-suggestion-schedule"],
-        },
-        "shopify-order-sync-schedule": {
-            "task": "worker.app.tasks.run_shopify_order_sync_schedule",
-            "schedule": SOURCE_SYNC_CADENCE["shopify-order-sync-schedule"],
-        },
-        "shopify-inventory-sync-schedule": {
-            "task": "worker.app.tasks.run_shopify_inventory_sync_schedule",
-            "schedule": SOURCE_SYNC_CADENCE["shopify-inventory-sync-schedule"],
-        },
-        "meta-spend-sync-schedule": {
-            "task": "worker.app.tasks.run_meta_spend_sync_schedule",
-            "schedule": SOURCE_SYNC_CADENCE["meta-spend-sync-schedule"],
-        },
-        "google-spend-sync-schedule": {
-            "task": "worker.app.tasks.run_google_spend_sync_schedule",
-            "schedule": SOURCE_SYNC_CADENCE["google-spend-sync-schedule"],
-        },
-        "run-optimization-engine": {
-            "task": "worker.app.tasks.run_optimization_engine_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE["run-optimization-engine"],
-        },
-        "demo-data-generation-6h": {
-            "task": "worker.app.tasks.generate_demo_data_one8",
-            "schedule": SYSTEM_SYNC_CADENCE["demo-data-generation-6h"],
-        },
-        "daily-data-simulation": {
-            "task": "worker.app.tasks.run_daily_data_simulation_schedule",
-            "schedule": SYSTEM_SYNC_CADENCE["daily-data-simulation"],
-        },
-    },
+    beat_schedule=beat_schedule,
 )
