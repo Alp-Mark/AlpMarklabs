@@ -15,16 +15,12 @@ python-dateutil
 itsdangerous
 openai
 
-# Celery dependencies (needed for celery-worker and celery-beat services)
+# Celery dependencies (needed for backend to import celery tasks)
 celery
 redis
 numpy
 boto3
 sentry-sdk[celery]
 
-# Optimization Engine dependencies (only loaded when ENABLE_OPTIMIZATION_ENGINE=true)
-# Using specific versions known to build on Railway
-scipy>=1.11.0,<1.12.0
-scikit-learn>=1.3.0,<1.4.0
-statsmodels>=0.14.0,<0.15.0
-# Note: prophet, scikit-optimize, ortools are optional - engine will work without them
+# Note: Optimization Engine ML dependencies (scipy, scikit-learn, statsmodels, etc.)
+# are in worker/requirements.txt - only the celery-worker service needs them
