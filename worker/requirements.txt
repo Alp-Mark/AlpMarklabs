@@ -3,6 +3,10 @@ celery
 redis
 sqlalchemy
 psycopg[binary]
+pydantic
+python-dateutil
+PyJWT
+cryptography
 
 # Install numpy first (needed by scipy)
 numpy>=1.24.0,<2.0.0
