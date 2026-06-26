@@ -2633,7 +2633,7 @@ def seed_optimization_strategies_endpoint(
                 tenant_id=ONE8_TENANT_ID,
                 domain="acquisition",
                 strategy_name="budget_allocation",
-                strategy_type="hill_curve_saturation",
+                strategy_type="budget_allocation",
                 is_enabled=True,  # Enable this one by default
                 config={
                     "description": "Optimize ad spend allocation across channels",
