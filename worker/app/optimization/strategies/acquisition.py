@@ -147,11 +147,12 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         )
         google_spend_raw = self.db.execute(google_query).all()
         
-        # Fetch order counts by date (proxy for conversions)
+        # Fetch order counts and revenue by date (proxy for conversions)
         orders_query = (
             select(
                 func.date(ShopifyOrder.order_created_at).label("order_date"),
                 func.count().label("order_count"),
+                func.sum(ShopifyOrder.total_amount).label("total_revenue"),
             )
             .where(ShopifyOrder.tenant_id == tenant_id)
             .where(func.date(ShopifyOrder.order_created_at) >= start_date)
@@ -161,6 +162,11 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             .order_by(func.date(ShopifyOrder.order_created_at))
         )
         orders_raw = self.db.execute(orders_query).all()
+        
+        # Calculate AOV (average order value) from historical data
+        total_orders = sum(row.order_count for row in orders_raw)
+        total_revenue = sum(row.total_revenue or 0.0 for row in orders_raw)
+        self.aov = total_revenue / total_orders if total_orders > 0 else 0.0
         
         # Build date-indexed dictionaries
         meta_spend_dict = {
@@ -472,6 +478,10 @@ class BudgetAllocationOptimizer(BaseOptimizer):
                 else 0.0
             )
             
+            # Calculate revenue impact using AOV
+            conversion_lift = expected_total_conv - current_total_conv
+            daily_revenue_impact = conversion_lift * self.aov if hasattr(self, 'aov') else 0.0
+            
             # Build optimization result
             result = {
                 "meta_spend": float(optimal_meta),
@@ -481,6 +491,8 @@ class BudgetAllocationOptimizer(BaseOptimizer):
                 "expected_conversions": float(expected_total_conv),
                 "current_conversions": float(current_total_conv),
                 "lift_pct": float(lift_pct),
+                "daily_revenue_impact": float(daily_revenue_impact),
+                "aov": float(self.aov) if hasattr(self, 'aov') else 0.0,
             }
             
             # Store result in instance variable
@@ -675,6 +687,8 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             "expected_conversions": opt["expected_conversions"],
             "current_conversions": opt["current_conversions"],
             "lift_pct": opt["lift_pct"],
+            "daily_revenue_impact": opt.get("daily_revenue_impact", 0.0),
+            "aov": opt.get("aov", 0.0),
             "meta_allocation": {
                 "spend": opt["meta_spend"],
                 "pct": opt["meta_pct"],
@@ -724,13 +738,16 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             f"Google to ₹{opt['google_spend']:,.0f}/day"
         )
         
-        # Calculate priority (1-100 scale based on lift)
-        if opt["lift_pct"] > 10:
+        # Calculate priority based on revenue impact
+        daily_revenue_impact = opt.get("daily_revenue_impact", 0.0)
+        if daily_revenue_impact > 10000:  # ₹10k+/day
             priority = 90  # high
-        elif opt["lift_pct"] > 5:
+        elif daily_revenue_impact > 5000:  # ₹5k+/day
+            priority = 70  # medium-high
+        elif daily_revenue_impact > 1000:  # ₹1k+/day
             priority = 50  # medium
         else:
-            priority = 20  # low
+            priority = 30  # low
         
         # Create recommendation
         recommendation = Recommendation(
@@ -741,7 +758,7 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             affected_area="Meta Ads, Google Ads",
             signal_summary=signal_summary,
             suggested_action=suggested_action,
-            estimated_impact=opt["lift_pct"],  # lift percentage
+            estimated_impact=daily_revenue_impact,  # Daily revenue impact in currency
             confidence_level=confidence_level,
             confidence_score=confidence_score,
             data_freshness_context=(
@@ -750,12 +767,15 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             ),
             status="new",
             priority=priority,
-            impact_score=opt["lift_pct"],  # use lift as impact score
+            impact_score=daily_revenue_impact,  # Revenue impact as score
             evidence={
                 "current_conversions": opt["current_conversions"],
                 "expected_conversions": opt["expected_conversions"],
                 "meta_spend": opt["meta_spend"],
                 "google_spend": opt["google_spend"],
+                "daily_revenue_impact": opt.get("daily_revenue_impact", 0.0),
+                "aov": opt.get("aov", 0.0),
+                "lift_pct": opt["lift_pct"],
             },
             data_sources=["meta", "google_ads", "shopify"],
             source="optimization",
