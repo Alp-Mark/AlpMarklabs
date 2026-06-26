@@ -33,8 +33,10 @@ celery_app = Celery(
     "alpmark_worker",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["worker.app.tasks", "worker.app.tasks_demo_data"],
 )
+
+# Import tasks to register them BEFORE configuring beat schedule
+from worker.app import tasks, tasks_demo_data  # noqa: E402, F401
 
 celery_app.conf.update(
     task_track_started=True,
@@ -112,7 +114,7 @@ celery_app.conf.update(
             "schedule": SYSTEM_SYNC_CADENCE["run-optimization-engine"],
         },
         "demo-data-generation-6h": {
-            "task": "worker.app.tasks_demo_data.generate_demo_data_one8",
+            "task": "worker.app.tasks.generate_demo_data_one8",
             "schedule": SYSTEM_SYNC_CADENCE["demo-data-generation-6h"],
         },
         "daily-data-simulation": {
