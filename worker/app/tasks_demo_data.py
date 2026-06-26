@@ -20,8 +20,6 @@ from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import text
 
-from worker.app.celery_app import celery_app
-
 # One8 demo tenant ID
 ONE8_TENANT_ID = "23165fa5-150b-4b6c-a637-b3dd24532c4d"
 
@@ -118,7 +116,6 @@ def run_demo_data_generation():
         db.close()
 
 
-@celery_app.task(name="worker.app.tasks.generate_demo_data_one8")
 def generate_demo_data_one8():
     """
     Celery task wrapper for demo data generation.
@@ -126,6 +123,18 @@ def generate_demo_data_one8():
     Delegates to run_demo_data_generation() for actual logic.
     """
     return run_demo_data_generation()
+
+
+# Register as celery task only when celery is available
+try:
+    from worker.app.celery_app import celery_app
+    # Manually register the function as a task
+    generate_demo_data_one8 = celery_app.task(
+        name="worker.app.tasks.generate_demo_data_one8"
+    )(generate_demo_data_one8)
+except ImportError:
+    # Celery not available - function can still be called directly
+    pass
 
 
 def _generate_orders(db, connector_id: str, num_orders: int) -> dict:
