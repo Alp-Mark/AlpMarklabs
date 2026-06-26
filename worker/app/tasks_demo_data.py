@@ -247,7 +247,7 @@ def _generate_orders(db, connector_id: str, num_orders: int) -> dict:
                 "order_created_at": order_time,
             })
     
-    # Insert orders in batch
+    # Insert orders in batch (skip duplicates)
     if orders_batch:
         db.execute(text("""
             INSERT INTO shopify_orders (
@@ -260,9 +260,10 @@ def _generate_orders(db, connector_id: str, num_orders: int) -> dict:
                 :shipping_amount, :refund_amount, :is_refunded,
                 :order_created_at, :synced_at
             )
+            ON CONFLICT (tenant_id, connector_id, external_order_id) DO NOTHING
         """), orders_batch)
     
-    # Insert line items in batch
+    # Insert line items in batch (skip duplicates)
     if line_items_batch:
         db.execute(text("""
             INSERT INTO shopify_order_line_items (
@@ -273,6 +274,7 @@ def _generate_orders(db, connector_id: str, num_orders: int) -> dict:
                 :product_title, :variant_title, :quantity,
                 :unit_price, :order_created_at
             )
+            ON CONFLICT (id) DO NOTHING
         """), line_items_batch)
     
     return {
