@@ -98,6 +98,8 @@ from backend.app.schemas.account import (
     AccountActivationResponse,
     BootstrapSuperAdminRequest,
     BootstrapSuperAdminResponse,
+    ChangePasswordRequest,
+    ChangePasswordResponse,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
@@ -1346,6 +1348,49 @@ def get_current_user(
         platform_role=auth.platform_role,
         tenant_id=tenant_id,
     )
+
+
+@app.patch("/users/me/password", response_model=ChangePasswordResponse)
+def change_user_password(
+    request: ChangePasswordRequest,
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> ChangePasswordResponse:
+    """Change the current authenticated user's password.
+
+    Args:
+        request: Password change request with current and new passwords
+        auth: Authenticated user context
+        db: Database session
+
+    Returns:
+        Success message
+
+    Raises:
+        400: If current password is incorrect or new password is invalid
+        404: If user not found
+
+    """
+    # Look up the user
+    user = db.scalar(select(User).where(User.email == auth.email))
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Verify current password
+    if user.password_hash is None or not verify_password(
+        request.current_password,
+        user.password_hash,
+    ):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    # Validate new password (minimum 8 characters - already enforced by Pydantic)
+    # Additional validation can be added here if needed
+
+    # Hash and save new password
+    user.password_hash = hash_password(request.new_password)
+    db.commit()
+
+    return ChangePasswordResponse(message="Password updated successfully")
 
 
 @app.get("/me/navigation", response_model=NavigationMenuResponse)

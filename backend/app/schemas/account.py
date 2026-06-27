@@ -108,3 +108,16 @@ class BootstrapSuperAdminResponse(BaseModel):
     tenant_id: uuid.UUID | None
     created_at: datetime
 
+
+class ChangePasswordRequest(BaseModel):
+    """Request for PATCH /users/me/password endpoint."""
+
+    current_password: str = Field(min_length=1, max_length=72)
+    new_password: str = Field(min_length=8, max_length=72)
+
+
+class ChangePasswordResponse(BaseModel):
+    """Response for PATCH /users/me/password endpoint."""
+
+    message: str
+

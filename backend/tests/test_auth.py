@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 from backend.app.db.models import PasswordResetToken, User
-from backend.app.password import hash_password
+from backend.app.password import hash_password, verify_password
 from backend.app.security import AUTH_JWT_ALGORITHM, AUTH_JWT_SECRET
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -632,3 +632,154 @@ def test_revoked_session_cannot_access_endpoints(
 
     assert response.status_code == 401
     assert "revoked" in response.json()["detail"].lower()
+
+
+def test_change_password_with_valid_credentials_succeeds(
+    db_session: Session, client: TestClient
+) -> None:
+    """Test that a user can change their password with correct current password."""
+    user = User(
+        email="changepass@alpmark.com",
+        full_name="Change Password User",
+        password_hash=hash_password("oldpassword123"),
+        is_active=True,
+        is_platform_admin=False,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    token = jwt.encode(
+        {
+            "sub": user.email,
+            "email": user.email,
+            "platform_role": None,
+            "iat": datetime.now(UTC),
+            "exp": datetime.now(UTC) + timedelta(hours=24),
+        },
+        AUTH_JWT_SECRET,
+        algorithm=AUTH_JWT_ALGORITHM,
+    )
+
+    client.headers["Authorization"] = f"Bearer {token}"
+
+    response = client.patch(
+        "/users/me/password",
+        json={
+            "current_password": "oldpassword123",
+            "new_password": "newpassword456",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["message"] == "Password updated successfully"
+
+    # Verify password was actually changed in database
+    db_session.refresh(user)
+    assert user.password_hash is not None
+    assert verify_password("newpassword456", user.password_hash)
+    assert not verify_password("oldpassword123", user.password_hash)
+
+
+def test_change_password_with_incorrect_current_password_fails(
+    db_session: Session, client: TestClient
+) -> None:
+    """Test that password change fails if current password is incorrect."""
+    user = User(
+        email="wrongpass@alpmark.com",
+        full_name="Wrong Password User",
+        password_hash=hash_password("correctpassword"),
+        is_active=True,
+        is_platform_admin=False,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    token = jwt.encode(
+        {
+            "sub": user.email,
+            "email": user.email,
+            "platform_role": None,
+            "iat": datetime.now(UTC),
+            "exp": datetime.now(UTC) + timedelta(hours=24),
+        },
+        AUTH_JWT_SECRET,
+        algorithm=AUTH_JWT_ALGORITHM,
+    )
+
+    client.headers["Authorization"] = f"Bearer {token}"
+
+    response = client.patch(
+        "/users/me/password",
+        json={
+            "current_password": "wrongpassword",
+            "new_password": "newpassword456",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Current password is incorrect"
+
+    # Verify password was not changed
+    db_session.refresh(user)
+    assert user.password_hash is not None
+    assert verify_password("correctpassword", user.password_hash)
+
+
+def test_change_password_with_short_new_password_fails(
+    db_session: Session, client: TestClient
+) -> None:
+    """Test that password change fails if new password is too short."""
+    user = User(
+        email="shortpass@alpmark.com",
+        full_name="Short Password User",
+        password_hash=hash_password("oldpassword123"),
+        is_active=True,
+        is_platform_admin=False,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    token = jwt.encode(
+        {
+            "sub": user.email,
+            "email": user.email,
+            "platform_role": None,
+            "iat": datetime.now(UTC),
+            "exp": datetime.now(UTC) + timedelta(hours=24),
+        },
+        AUTH_JWT_SECRET,
+        algorithm=AUTH_JWT_ALGORITHM,
+    )
+
+    client.headers["Authorization"] = f"Bearer {token}"
+
+    response = client.patch(
+        "/users/me/password",
+        json={
+            "current_password": "oldpassword123",
+            "new_password": "short",
+        },
+    )
+
+    assert response.status_code == 422  # Validation error
+    assert "new_password" in str(response.json())
+
+    # Verify password was not changed
+    db_session.refresh(user)
+    assert user.password_hash is not None
+    assert verify_password("oldpassword123", user.password_hash)
+
+
+def test_change_password_without_authentication_fails(client: TestClient) -> None:
+    """Test that password change fails without authentication token."""
+    response = client.patch(
+        "/users/me/password",
+        json={
+            "current_password": "oldpassword123",
+            "new_password": "newpassword456",
+        },
+    )
+
+    # FastAPI returns 400 when auth is missing because the endpoint requires AuthDep
+    assert response.status_code in [400, 401]
+
