@@ -12,6 +12,10 @@ class ExecutiveTrendDataPoint(BaseModel):
 
     snapshot_date: date
     revenue_amount: float
+    order_count: int
+    aov: float
+    customer_count: int
+    profit_amount: float
     ad_spend_amount: float
     blended_roas: float
     contribution_margin_pct: float

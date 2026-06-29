@@ -45,7 +45,6 @@ from backend.app.db.models import (
     DelegationRule,
     EmailDeliveryLog,
     EscalationRule,
-    ExecutiveKpiSnapshot,
     ExportShare,
     FeatureFlag,
     InventoryRiskSnapshot,
@@ -3222,7 +3221,7 @@ def seed_one8_realistic(
                     "Day-to-day variance and noise"
                 ]
             },
-            "next_step": "Trigger optimization: POST /admin/trigger-optimization"
+            "next_step": "Trigger optimization: POST /admin/optimization-engine/trigger"
         }
     
     except ImportError as e:
@@ -10829,28 +10828,72 @@ def get_executive_trend(
     )
     period_start, period_end = date_utils.calculate_date_range(params)
 
-    # Query snapshots within date range
-    snapshots = db.scalars(
-        select(ExecutiveKpiSnapshot)
-        .where(ExecutiveKpiSnapshot.tenant_id == tenant_id)
-        .where(ExecutiveKpiSnapshot.snapshot_date >= period_start)
-        .where(ExecutiveKpiSnapshot.snapshot_date <= period_end)
-        .order_by(ExecutiveKpiSnapshot.snapshot_date)
-    ).all()
+    # Compute per-day metrics directly from shopify_orders
+    from sqlalchemy import text  # noqa: PLC0415
+    order_rows = db.execute(
+        text("""
+            SELECT
+                order_created_at::date AS day,
+                SUM(total_amount)           AS revenue,
+                COUNT(id)                   AS order_count,
+                AVG(total_amount)           AS aov,
+                COUNT(DISTINCT customer_id) AS customer_count
+            FROM shopify_orders
+            WHERE tenant_id = :tid
+              AND is_refunded = false
+              AND order_created_at::date >= :start
+              AND order_created_at::date <= :end
+            GROUP BY day
+            ORDER BY day
+        """),
+        {"tid": str(tenant_id), "start": period_start, "end": period_end},
+    ).fetchall()
+
+    # Compute per-day ad spend (Meta + Google combined)
+    spend_rows = db.execute(
+        text("""
+            SELECT spend_date, SUM(spend_amount) AS total_spend
+            FROM (
+                SELECT spend_date, spend_amount
+                FROM meta_ad_spends
+                WHERE tenant_id = :tid
+                  AND spend_date >= :start AND spend_date <= :end
+                UNION ALL
+                SELECT spend_date, spend_amount
+                FROM google_ad_spends
+                WHERE tenant_id = :tid
+                  AND spend_date >= :start AND spend_date <= :end
+            ) combined
+            GROUP BY spend_date
+        """),
+        {"tid": str(tenant_id), "start": period_start, "end": period_end},
+    ).fetchall()
+
+    spend_by_day: dict = {row.spend_date: float(row.total_spend) for row in spend_rows}
 
     # Build response
     from backend.app.schemas.trends import ExecutiveTrendDataPoint
 
-    data_points = [
-        ExecutiveTrendDataPoint(
-            snapshot_date=snap.snapshot_date,
-            revenue_amount=snap.revenue_amount,
-            ad_spend_amount=snap.ad_spend_amount,
-            blended_roas=snap.blended_roas,
-            contribution_margin_pct=snap.contribution_margin_pct,
+    data_points = []
+    for row in order_rows:
+        revenue = float(row.revenue or 0)
+        ad_spend = spend_by_day.get(row.day, 0.0)
+        profit = revenue - ad_spend
+        roas = revenue / ad_spend if ad_spend > 0 else 0.0
+        margin_pct = (profit / revenue * 100.0) if revenue > 0 else 0.0
+        data_points.append(
+            ExecutiveTrendDataPoint(
+                snapshot_date=row.day,
+                revenue_amount=revenue,
+                order_count=int(row.order_count),
+                aov=float(row.aov or 0),
+                customer_count=int(row.customer_count),
+                profit_amount=profit,
+                ad_spend_amount=ad_spend,
+                blended_roas=round(roas, 2),
+                contribution_margin_pct=round(margin_pct, 2),
+            )
         )
-        for snap in snapshots
-    ]
 
     return ExecutiveTrendResponse(
         data_points=data_points,
