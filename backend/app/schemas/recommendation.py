@@ -60,12 +60,12 @@ class RecommendationResponse(BaseModel):
         ),
     )
     priority: int
-    impact_score: float = Field(
-        default=0.0,
+    impact_score: float | None = Field(
+        default=None,
         description="Impact score used for prioritization",
     )
-    evidence: dict = Field(
-        default_factory=dict,
+    evidence: dict | None = Field(
+        default=None,
         description="Supporting evidence and detailed metrics for the recommendation",
     )
     review_note: str | None

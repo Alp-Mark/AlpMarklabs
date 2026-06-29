@@ -16,7 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, deferred, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
 from backend.app.db.base import Base
@@ -1691,8 +1691,12 @@ class Recommendation(Base):
         String(30), nullable=False, default="new"
     )
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
-    impact_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    impact_score: Mapped[float | None] = deferred(
+        mapped_column(Float, nullable=True, default=None)
+    )
+    evidence: Mapped[dict | None] = deferred(
+        mapped_column(JSON, nullable=True, default=None)
+    )
     # E1: Numeric confidence score (0-1 scale) and data source tracking
     confidence_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     data_sources: Mapped[list] = mapped_column(
