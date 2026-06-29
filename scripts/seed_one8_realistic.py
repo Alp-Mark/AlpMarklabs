@@ -211,6 +211,9 @@ def seed_realistic_data(days=90):
     print("")
     
     with engine.connect() as conn:
+        # Start a transaction for the deletion
+        trans = conn.begin()
+        
         # Get connector_id
         connector = conn.execute(text("""
             SELECT id FROM connector_integrations 
@@ -259,9 +262,13 @@ def seed_realistic_data(days=90):
                 else:
                     print(f"   ⚠️  {table}: {e}")
         
-        conn.commit()
+        # Commit the deletions BEFORE starting inserts
+        trans.commit()
         total_deleted = sum(deleted_counts.values())
         print(f"   ✅ Total deleted: {total_deleted:,} rows\n")
+        
+        # Start a new transaction for inserts
+        trans = conn.begin()
         
         # Generate data day by day with realistic patterns
         meta_batch = []
@@ -431,7 +438,8 @@ def seed_realistic_data(days=90):
             WHERE id = :cid
         """), {"cid": connector_id, "now": datetime.utcnow()})
         
-        conn.commit()
+        # Commit the insert transaction
+        trans.commit()
         print("   ✅ All data inserted\n")
         
         # Summary
