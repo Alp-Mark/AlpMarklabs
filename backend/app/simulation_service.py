@@ -1602,12 +1602,15 @@ class SimulationService:
 
         # Extract parameters based on domain
         parameters_used: dict = {}
+        
+        # Temporary: evidence column may not exist yet, default to empty dict
+        rec_evidence: dict = getattr(recommendation, "evidence", None) or {}
 
         if recommendation.domain == "growth":
             # Growth domain: extract budget and channels from evidence
             parameters_used = {
-                "total_budget": recommendation.evidence.get("total_budget", 5000.0),
-                "channel_allocations": recommendation.evidence.get(
+                "total_budget": rec_evidence.get("total_budget", 5000.0),
+                "channel_allocations": rec_evidence.get(
                     "channel_allocations", {"google": 0.5, "meta": 0.5}
                 ),
             }
@@ -1626,13 +1629,13 @@ class SimulationService:
         elif recommendation.domain == "retention":
             # Retention domain: extract offer and segment data
             parameters_used = {
-                "offer_discount_pct": recommendation.evidence.get(
+                "offer_discount_pct": rec_evidence.get(
                     "offer_discount_pct", 10.0
                 ),
-                "response_rate_pct": recommendation.evidence.get(
+                "response_rate_pct": rec_evidence.get(
                     "response_rate_pct", 15.0
                 ),
-                "estimated_segment_size": recommendation.evidence.get(
+                "estimated_segment_size": rec_evidence.get(
                     "estimated_segment_size", 1000
                 ),
             }
@@ -1652,10 +1655,10 @@ class SimulationService:
         elif recommendation.domain == "margin":
             # Margin domain: extract cost input changes
             parameters_used = {
-                "target_margin_improvement_pct": recommendation.evidence.get(
+                "target_margin_improvement_pct": rec_evidence.get(
                     "target_margin_improvement_pct", 5.0
                 ),
-                "cost_input_adjustments": recommendation.evidence.get(
+                "cost_input_adjustments": rec_evidence.get(
                     "cost_input_adjustments", {}
                 ),
             }
@@ -1679,10 +1682,10 @@ class SimulationService:
         elif recommendation.domain == "inventory":
             # Inventory domain: extract reorder and stockout parameters
             parameters_used = {
-                "reorder_qty_multiplier": recommendation.evidence.get(
+                "reorder_qty_multiplier": rec_evidence.get(
                     "reorder_qty_multiplier", 1.0
                 ),
-                "lead_time_days": recommendation.evidence.get("lead_time_days", 7),
+                "lead_time_days": rec_evidence.get("lead_time_days", 7),
             }
             # Apply overrides if provided
             if override_parameters:
@@ -1699,10 +1702,10 @@ class SimulationService:
         elif recommendation.domain == "ops":
             # Ops domain: same as inventory (operations simulations)
             parameters_used = {
-                "reorder_qty_multiplier": recommendation.evidence.get(
+                "reorder_qty_multiplier": rec_evidence.get(
                     "reorder_qty_multiplier", 1.0
                 ),
-                "lead_time_days": recommendation.evidence.get("lead_time_days", 7),
+                "lead_time_days": rec_evidence.get("lead_time_days", 7),
             }
             # Apply overrides if provided
             if override_parameters:
@@ -1719,10 +1722,10 @@ class SimulationService:
         elif recommendation.domain == "executive":
             # Executive domain: cross-functional mix and strategy
             parameters_used = {
-                "pricing_change_pct": recommendation.evidence.get(
+                "pricing_change_pct": rec_evidence.get(
                     "pricing_change_pct", 0.0
                 ),
-                "demand_multiplier": recommendation.evidence.get(
+                "demand_multiplier": rec_evidence.get(
                     "demand_multiplier", 1.0
                 ),
             }
@@ -1880,9 +1883,11 @@ class SimulationService:
         upside_metrics = upside.get("output_metrics", {})
         downside_metrics = downside.get("output_metrics", {})
 
-        tone = override_tone or (
-            "urgent" if recommendation.impact_score > 7 else "balanced"
-        )
+        # Temporarily use default tone until impact_score column exists
+        tone = override_tone or "balanced"
+        # tone = override_tone or (
+        #     "urgent" if recommendation.impact_score > 7 else "balanced"
+        # )
 
         prompt = f"""
 Generate a narrative for this recommendation using ONLY the data provided below.
