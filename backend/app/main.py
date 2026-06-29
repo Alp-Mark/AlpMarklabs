@@ -6489,9 +6489,28 @@ def get_tenant_recommendations(
             stmt = stmt.where(Recommendation.outcome_observed_at.is_(None))
     stmt = stmt.order_by(Recommendation.priority, Recommendation.created_at.desc())
     items = list(db.scalars(stmt))
+    
+    # Filter out low-confidence recommendations (< 20% confidence)
+    MIN_CONFIDENCE = 0.20
+    filtered_items = [
+        r for r in items
+        if r.source == "threshold" or r.confidence_score >= MIN_CONFIDENCE
+    ]
+    
+    # Deduplicate threshold-based recommendations by signal_summary
+    seen_signals: set[str] = set()
+    deduplicated_items = []
+    for r in filtered_items:
+        if r.source == "threshold":
+            if r.signal_summary not in seen_signals:
+                seen_signals.add(r.signal_summary)
+                deduplicated_items.append(r)
+        else:
+            deduplicated_items.append(r)
+    
     return RecommendationListResponse(
-        items=[RecommendationResponse.model_validate(r) for r in items],
-        total=len(items),
+        items=[RecommendationResponse.model_validate(r) for r in deduplicated_items],
+        total=len(deduplicated_items),
     )
 
 
