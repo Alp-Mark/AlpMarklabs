@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class RecommendationResponse(BaseModel):
@@ -71,6 +71,16 @@ class RecommendationResponse(BaseModel):
     review_note: str | None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("confidence_score", mode="before")
+    @classmethod
+    def clamp_confidence_score(cls, v: float) -> float:
+        """Clamp confidence_score to valid range [0.0, 1.0] to handle legacy data."""
+        if v < 0.0:
+            return 0.0
+        if v > 1.0:
+            return 1.0
+        return v
 
 
 class RecommendationListResponse(BaseModel):
