@@ -1,19 +1,17 @@
 """
 Celery task: Generate fresh data every 6 hours for One8 demo tenant.
 
-This task simulates ongoing business activity by creating:
-- New orders with line items
-- New ad spend (Meta + Google)
-- Updated inventory snapshots
-- Updated cohort snapshots  
-- Updated cost driver snapshots
-- Updated margin drift snapshots
-- Updated operational impact snapshots
-- All other metric tables
+This task simulates ongoing business activity with REALISTIC patterns:
+- Seasonality (Cricket season, Diwali, festivals)
+- Weekend spikes
+- Spend-to-conversion correlation (saturation curves)
+- Campaign bursts with diminishing returns
+- Day-to-day variance
 
 Runs every 6 hours via Celery beat schedule.
 """
 
+import math
 import random
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -23,12 +21,96 @@ from sqlalchemy import text
 # One8 demo tenant ID
 ONE8_TENANT_ID = "23165fa5-150b-4b6c-a637-b3dd24532c4d"
 
+# Realistic baseline parameters
+BASELINE = {
+    "base_daily_orders": 200,
+    "base_meta_spend": 180000,  # INR/day
+    "base_google_spend": 110000,  # INR/day
+}
+
+
+def get_seasonality_multiplier(dt):
+    """Get seasonality multiplier for a given date (same as seed script)."""
+    month = dt.month
+    day = dt.day
+    
+    # Diwali peak (Oct 24-Nov 15)
+    if month == 10 and day >= 24 or month == 11 and day <= 15:
+        diwali_center = datetime(dt.year, 11, 1)
+        days_from_diwali = abs((dt.date() - diwali_center.date()).days)
+        if days_from_diwali <= 3:
+            return 2.0
+        elif days_from_diwali <= 10:
+            return 1.6
+        else:
+            return 1.3
+    
+    # IPL season (March-May)
+    if month in [3, 4, 5]:
+        return 1.5
+    
+    # Early October (World Cup / Cricket season)
+    if month == 10 and day < 24:
+        return 1.4
+    
+    # New Year (Dec 20 - Jan 10)
+    if (month == 12 and day >= 20) or (month == 1 and day <= 10):
+        return 1.3
+    
+    # Valentine's (Feb 10-15)
+    if month == 2 and 10 <= day <= 15:
+        return 1.2
+    
+    # Summer lull (June-August)
+    if month in [6, 7, 8]:
+        return 0.85
+    
+    return 1.0
+
+
+def get_weekend_multiplier(dt):
+    """Weekend spike multiplier."""
+    weekday = dt.weekday()
+    if weekday == 4:  # Friday
+        return 1.25
+    elif weekday == 5:  # Saturday
+        return 1.4
+    elif weekday == 6:  # Sunday
+        return 1.35
+    else:
+        return 1.0
+
+
+def calculate_conversions_from_spend(meta_spend, google_spend):
+    """Calculate realistic conversions using Hill curve saturation."""
+    total_spend = meta_spend + google_spend
+    
+    # Hill curve parameters (matches seed script)
+    max_daily_conversions = 600
+    half_saturation_spend = 350000
+    saturation_exponent = 1.8
+    
+    # Hill curve formula
+    spend_power = total_spend ** saturation_exponent
+    k_power = half_saturation_spend ** saturation_exponent
+    saturation_conversions = max_daily_conversions * (spend_power / (k_power + spend_power))
+    
+    # Add noise (±10%)
+    noise = random.uniform(0.9, 1.1)
+    conversions = int(saturation_conversions * noise)
+    
+    return max(0, conversions)
+
 
 def run_demo_data_generation():
     """
-    Core logic for demo data generation (no celery dependency).
+    Core logic for demo data generation with REALISTIC patterns.
     
-    Can be called from celery task OR directly from API endpoint.
+    Flow:
+    1. Generate today's ad spend with seasonality/campaign patterns
+    2. Calculate orders based on spend using Hill curve saturation
+    3. Apply seasonality and weekend multipliers
+    4. Update snapshots
     
     Returns:
         dict: Summary of generated data
@@ -38,12 +120,20 @@ def run_demo_data_generation():
     db = SessionLocal()
     
     try:
+        now = datetime.now(UTC)
+        today = now.date()
+        
         summary = {
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": now.isoformat(),
             "tenant_id": ONE8_TENANT_ID,
+            "date": str(today),
+            "seasonality": get_seasonality_multiplier(now),
+            "weekend_mult": get_weekend_multiplier(now),
             "orders_created": 0,
             "line_items_created": 0,
             "ad_spend_records": 0,
+            "meta_spend": 0,
+            "google_spend": 0,
             "snapshots_updated": [],
         }
         
@@ -57,8 +147,31 @@ def run_demo_data_generation():
         if not connector_id:
             return {"error": "No Shopify connector found for One8"}
         
-        # === 1. Generate new orders (80-120 orders per 6-hour period) ===
-        num_orders = random.randint(80, 120)
+        # === 1. Generate realistic ad spend for today ===
+        ad_spend_result = _generate_realistic_ad_spend(db, today, now)
+        summary["ad_spend_records"] = ad_spend_result["records_created"]
+        summary["meta_spend"] = ad_spend_result["meta_spend"]
+        summary["google_spend"] = ad_spend_result["google_spend"]
+        
+        # === 2. Calculate orders from spend using saturation curve ===
+        if ad_spend_result["meta_spend"] > 0 or ad_spend_result["google_spend"] > 0:
+            base_conversions = calculate_conversions_from_spend(
+                ad_spend_result["meta_spend"],
+                ad_spend_result["google_spend"]
+            )
+            
+            # Apply seasonality and weekend effects
+            season_mult = get_seasonality_multiplier(now)
+            weekend_mult = get_weekend_multiplier(now)
+            target_conversions = int(base_conversions * season_mult * weekend_mult)
+            
+            # For 6-hour period, generate 1/4 of daily conversions
+            num_orders = int(target_conversions / 4)
+        else:
+            # Fallback if no spend data
+            num_orders = random.randint(40, 60)
+        
+        # === 3. Generate orders ===
         orders_created = _generate_orders(
             db, 
             connector_id, 
@@ -66,39 +179,32 @@ def run_demo_data_generation():
         )
         summary["orders_created"] = orders_created["count"]
         summary["line_items_created"] = orders_created["line_items"]
+        summary["calculated_daily_conversions"] = num_orders * 4
         
-        # === 2. Generate ad spend for today ===
-        ad_spend_created = _generate_ad_spend(db)
-        summary["ad_spend_records"] = ad_spend_created
-
-        # Update connector last_synced_at so the dashboard shows fresh sync time
+        # Update connector last_synced_at
         db.execute(text("""
             UPDATE connector_integrations
             SET last_synced_at = :now
             WHERE tenant_id = :tid AND source = 'shopify'
-        """), {"now": datetime.now(UTC), "tid": ONE8_TENANT_ID})
+        """), {"now": now, "tid": ONE8_TENANT_ID})
         
-        # === 3. Update inventory snapshots ===
+        # === 4. Update snapshots ===
         inventory_updated = _update_inventory_snapshots(db)
         if inventory_updated:
             summary["snapshots_updated"].append("inventory_risk")
         
-        # === 4. Update cohort snapshots ===
         cohort_updated = _update_cohort_snapshots(db)
         if cohort_updated:
             summary["snapshots_updated"].append("cohort")
         
-        # === 5. Update cost driver snapshots ===
         cost_updated = _update_cost_driver_snapshots(db)
         if cost_updated:
             summary["snapshots_updated"].append("cost_driver")
         
-        # === 6. Update margin drift snapshots ===
         margin_updated = _update_margin_drift_snapshots(db)
         if margin_updated:
             summary["snapshots_updated"].append("margin_drift")
         
-        # === 7. Update operational impact snapshots ===
         ops_updated = _update_operational_impact_snapshots(db)
         if ops_updated:
             summary["snapshots_updated"].append("operational_impact")
@@ -283,36 +389,20 @@ def _generate_orders(db, connector_id: str, num_orders: int) -> dict:
     }
 
 
-def _generate_ad_spend(db) -> int:
-    """Generate today's ad spend data if not already exists.
-
-    Matches the real meta_ad_spends/google_ad_spends schema:
-    id, tenant_id, connector_id, external_campaign_id, campaign_name,
-    spend_date, currency, spend_amount, synced_at, created_at, updated_at.
+def _generate_realistic_ad_spend(db, today: date, now: datetime) -> dict:
     """
-
-    today = date.today()
-    now = datetime.now(UTC)
-
-    # Reuse an existing connector + campaign so columns/FKs match real data.
-    meta_ref = db.execute(text("""
-        SELECT connector_id, external_campaign_id FROM meta_ad_spends
-        WHERE tenant_id = :tid ORDER BY spend_date DESC LIMIT 1
-    """), {"tid": ONE8_TENANT_ID}).fetchone()
-    google_ref = db.execute(text("""
-        SELECT connector_id, external_campaign_id FROM google_ad_spends
-        WHERE tenant_id = :tid ORDER BY spend_date DESC LIMIT 1
-    """), {"tid": ONE8_TENANT_ID}).fetchone()
-
-    fallback_connector = db.scalar(text("""
-        SELECT id FROM connector_integrations WHERE tenant_id = :tid LIMIT 1
-    """), {"tid": ONE8_TENANT_ID})
-
-    meta_connector = meta_ref[0] if meta_ref else fallback_connector
-    meta_campaign = meta_ref[1] if meta_ref else "one8_meta_daily"
-    google_connector = google_ref[0] if google_ref else fallback_connector
-    google_campaign = google_ref[1] if google_ref else "one8_google_daily"
-
+    Generate today's ad spend with realistic patterns.
+    
+    Applies:
+    - Seasonality multipliers (Diwali, IPL, etc.)
+    - Weekend optimization (reduce spend on weekends)
+    - Campaign burst patterns (every ~40 days)
+    - Daily variance (±15%)
+    
+    Returns: {"records_created": int, "meta_spend": float, "google_spend": float}
+    """
+    
+    # Check if today's spend already exists
     meta_exists = db.scalar(text("""
         SELECT COUNT(*) FROM meta_ad_spends
         WHERE tenant_id = :tid AND spend_date = :date
@@ -322,66 +412,134 @@ def _generate_ad_spend(db) -> int:
         SELECT COUNT(*) FROM google_ad_spends
         WHERE tenant_id = :tid AND spend_date = :date
     """), {"tid": ONE8_TENANT_ID, "date": today})
+    
+    if meta_exists and google_exists:
+        # Already seeded today, return existing values
+        existing_meta = db.scalar(text("""
+            SELECT SUM(spend_amount) FROM meta_ad_spends
+            WHERE tenant_id = :tid AND spend_date = :date
+        """), {"tid": ONE8_TENANT_ID, "date": today}) or 0
+        
+        existing_google = db.scalar(text("""
+            SELECT SUM(spend_amount) FROM google_ad_spends
+            WHERE tenant_id = :tid AND spend_date = :date
+        """), {"tid": ONE8_TENANT_ID, "date": today}) or 0
+        
+        return {
+            "records_created": 0,
+            "meta_spend": float(existing_meta),
+            "google_spend": float(existing_google),
+        }
+    
+    # Get connector IDs (reuse existing campaigns)
+    meta_ref = db.execute(text("""
+        SELECT connector_id, campaign_name FROM meta_ad_spends
+        WHERE tenant_id = :tid ORDER BY spend_date DESC LIMIT 1
+    """), {"tid": ONE8_TENANT_ID}).fetchone()
+    
+    google_ref = db.execute(text("""
+        SELECT connector_id, campaign_name FROM google_ad_spends
+        WHERE tenant_id = :tid ORDER BY spend_date DESC LIMIT 1
+    """), {"tid": ONE8_TENANT_ID}).fetchone()
 
+    fallback_connector = db.scalar(text("""
+        SELECT id FROM connector_integrations WHERE tenant_id = :tid LIMIT 1
+    """), {"tid": ONE8_TENANT_ID})
+
+    meta_connector = meta_ref[0] if meta_ref else fallback_connector
+    google_connector = google_ref[0] if google_ref else fallback_connector
+    
+    # Calculate days since epoch for campaign cycle
+    days_since_epoch = (today - date(2026, 1, 1)).days
+    campaign_cycle_day = days_since_epoch % 40
+    
+    # Campaign burst pattern (2-week bursts every ~40 days)
+    if 5 <= campaign_cycle_day <= 18:
+        campaign_mult = 1.8  # Heavy campaign
+    elif campaign_cycle_day <= 25:
+        campaign_mult = 1.2  # Wind-down
+    else:
+        campaign_mult = 1.0  # Normal
+    
+    # Weekend optimization (reduce paid spend when organic is high)
+    weekend_mult = 0.9 if now.weekday() in [5, 6] else 1.0
+    
+    # Daily variance
+    daily_variance = random.uniform(0.85, 1.15)
+    
+    # Calculate spend with all multipliers
+    meta_spend = BASELINE["base_meta_spend"] * campaign_mult * weekend_mult * daily_variance
+    google_spend = BASELINE["base_google_spend"] * campaign_mult * weekend_mult * daily_variance
+    
     records_created = 0
+    
+    # Insert Meta spend (split across 3 campaigns)
+    if not meta_exists and meta_connector:
+        meta_campaigns = ["Acquisition - Broad", "Retargeting", "Collection Launch"]
+        for campaign in meta_campaigns:
+            campaign_spend = meta_spend / len(meta_campaigns)
+            db.execute(text("""
+                INSERT INTO meta_ad_spends (
+                    id, tenant_id, connector_id, external_campaign_id,
+                    campaign_name, spend_date, currency, spend_amount,
+                    synced_at, created_at, updated_at
+                ) VALUES (
+                    :id, :tenant_id, :connector_id, :external_campaign_id,
+                    :campaign_name, :spend_date, :currency, :spend_amount,
+                    :synced_at, :created_at, :updated_at
+                )
+            """), {
+                "id": str(uuid.uuid4()),
+                "tenant_id": ONE8_TENANT_ID,
+                "connector_id": str(meta_connector),
+                "external_campaign_id": f"meta_{campaign.replace(' ', '_')}_{today.strftime('%Y%m%d')}",
+                "campaign_name": campaign,
+                "spend_date": today,
+                "currency": "INR",
+                "spend_amount": round(campaign_spend, 2),
+                "synced_at": now,
+                "created_at": now,
+                "updated_at": now,
+            })
+            records_created += 1
+    
+    # Insert Google spend (split across 3 campaigns)
+    if not google_exists and google_connector:
+        google_campaigns = ["Search - Brand", "Search - Generic", "Shopping"]
+        for campaign in google_campaigns:
+            campaign_spend = google_spend / len(google_campaigns)
+            db.execute(text("""
+                INSERT INTO google_ad_spends (
+                    id, tenant_id, connector_id, external_campaign_id,
+                    campaign_name, spend_date, currency, spend_amount,
+                    synced_at, created_at, updated_at
+                ) VALUES (
+                    :id, :tenant_id, :connector_id, :external_campaign_id,
+                    :campaign_name, :spend_date, :currency, :spend_amount,
+                    :synced_at, :created_at, :updated_at
+                )
+            """), {
+                "id": str(uuid.uuid4()),
+                "tenant_id": ONE8_TENANT_ID,
+                "connector_id": str(google_connector),
+                "external_campaign_id": f"google_{campaign.replace(' ', '_')}_{today.strftime('%Y%m%d')}",
+                "campaign_name": campaign,
+                "spend_date": today,
+                "currency": "INR",
+                "spend_amount": round(campaign_spend, 2),
+                "synced_at": now,
+                "created_at": now,
+                "updated_at": now,
+            })
+            records_created += 1
 
-    # Meta ad spend (Rs 20k-40k per day)
-    if not meta_exists and meta_connector is not None:
-        meta_spend = random.uniform(20000, 40000)
-        db.execute(text("""
-            INSERT INTO meta_ad_spends (
-                id, tenant_id, connector_id, external_campaign_id,
-                campaign_name, spend_date, currency, spend_amount,
-                synced_at, created_at, updated_at
-            ) VALUES (
-                :id, :tenant_id, :connector_id, :external_campaign_id,
-                :campaign_name, :spend_date, :currency, :spend_amount,
-                :synced_at, :created_at, :updated_at
-            )
-        """), {
-            "id": str(uuid.uuid4()),
-            "tenant_id": ONE8_TENANT_ID,
-            "connector_id": str(meta_connector),
-            "external_campaign_id": meta_campaign,
-            "campaign_name": "One8_Meta_Daily",
-            "spend_date": today,
-            "currency": "INR",
-            "spend_amount": round(meta_spend, 2),
-            "synced_at": now,
-            "created_at": now,
-            "updated_at": now,
-        })
-        records_created += 1
+    return {
+        "records_created": records_created,
+        "meta_spend": round(meta_spend, 2),
+        "google_spend": round(google_spend, 2),
+    }
 
-    # Google ad spend (Rs 15k-30k per day)
-    if not google_exists and google_connector is not None:
-        google_spend = random.uniform(15000, 30000)
-        db.execute(text("""
-            INSERT INTO google_ad_spends (
-                id, tenant_id, connector_id, external_campaign_id,
-                campaign_name, spend_date, currency, spend_amount,
-                synced_at, created_at, updated_at
-            ) VALUES (
-                :id, :tenant_id, :connector_id, :external_campaign_id,
-                :campaign_name, :spend_date, :currency, :spend_amount,
-                :synced_at, :created_at, :updated_at
-            )
-        """), {
-            "id": str(uuid.uuid4()),
-            "tenant_id": ONE8_TENANT_ID,
-            "connector_id": str(google_connector),
-            "external_campaign_id": google_campaign,
-            "campaign_name": "One8_Google_Daily",
-            "spend_date": today,
-            "currency": "INR",
-            "spend_amount": round(google_spend, 2),
-            "synced_at": now,
-            "created_at": now,
-            "updated_at": now,
-        })
-        records_created += 1
 
-    return records_created
 
 
 def _update_inventory_snapshots(db) -> bool:
