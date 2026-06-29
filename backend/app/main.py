@@ -3195,51 +3195,40 @@ def seed_one8_realistic(
     Wipes ALL existing One8 data and seeds 90 days of realistic patterns.
     WARNING: This deletes all existing One8 data!
     """
-    import subprocess
     import sys
     from pathlib import Path
     
-    # Path to seed script
-    script_path = (
-        Path(__file__).parent.parent.parent
-        / "scripts"
-        / "seed_one8_realistic.py"
-    )
-    
-    if not script_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Seed script not found at {script_path}",
-        )
+    # Add scripts directory to path
+    scripts_path = Path(__file__).parent.parent.parent / "scripts"
+    sys.path.insert(0, str(scripts_path))
     
     try:
-        # Run the seeding script
-        result = subprocess.run(
-            [sys.executable, str(script_path)],
-            capture_output=True,
-            text=True,
-            timeout=300,  # 5 minute timeout
-        )
+        # Import and call the seeding function directly
+        from seed_one8_realistic import seed_realistic_data
         
-        if result.returncode != 0:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Seeding failed: {result.stderr}",
-            )
+        # Run the seeding function
+        seed_realistic_data(days=90)
         
         return {
             "message": "✅ One8 realistic data seeding completed",
-            "exit_code": result.returncode,
-            "output": result.stdout[-1000:],  # Last 1000 chars
-            "next_step": (
-                "Trigger optimization: POST /admin/trigger-optimization"
-            ),
+            "details": {
+                "days_seeded": 90,
+                "patterns": [
+                    "Cricket season spikes (IPL, World Cup)",
+                    "Diwali peak (2x sales)",
+                    "Weekend patterns (Fri-Sun +25-40%)",
+                    "Campaign bursts with diminishing returns",
+                    "Realistic spend-to-conversion saturation curves",
+                    "Day-to-day variance and noise"
+                ]
+            },
+            "next_step": "Trigger optimization: POST /admin/trigger-optimization"
         }
     
-    except subprocess.TimeoutExpired:
+    except ImportError as e:
         raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="Seeding script timed out after 5 minutes",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to import seeding module: {str(e)}",
         ) from None
     except Exception as e:
         raise HTTPException(
