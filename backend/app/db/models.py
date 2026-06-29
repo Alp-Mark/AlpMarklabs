@@ -1691,13 +1691,8 @@ class Recommendation(Base):
         String(30), nullable=False, default="new"
     )
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
-    # TODO: Uncomment after Railway migrations run (0034, 0035)
-    # impact_score: Mapped[float | None] = deferred(
-    #     mapped_column(Float, nullable=True, default=None)
-    # )
-    # evidence: Mapped[dict | None] = deferred(
-    #     mapped_column(JSON, nullable=True, default=None)
-    # )
+    impact_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     # E1: Numeric confidence score (0-1 scale) and data source tracking
     confidence_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     data_sources: Mapped[list] = mapped_column(
