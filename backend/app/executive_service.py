@@ -755,9 +755,10 @@ def _calculate_team_performance(
     # Operations team
     # For return rate, lower is better, so invert the trend logic
     ops_trend = "stable"
-    if return_rate_pct is not None and comp.get("return_rate_pct") is not None:
+    comp_return_rate = comp.get("return_rate_pct")
+    if return_rate_pct is not None and comp_return_rate:
         change_pct = (
-            (return_rate_pct - comp["return_rate_pct"]) / comp["return_rate_pct"]
+            (return_rate_pct - comp_return_rate) / comp_return_rate
         ) * 100.0
         if change_pct < -5.0:  # Return rate going down is good
             ops_trend = "improving"
