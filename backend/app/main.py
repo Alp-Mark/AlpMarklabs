@@ -3184,6 +3184,70 @@ def delete_tenant(
     )
 
 
+@app.post("/admin/seed-one8-realistic")
+def seed_one8_realistic(
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> dict:
+    """
+    Trigger realistic One8 data seeding (super-admin only).
+    
+    Wipes ALL existing One8 data and seeds 90 days of realistic patterns.
+    WARNING: This deletes all existing One8 data!
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+    
+    # Path to seed script
+    script_path = (
+        Path(__file__).parent.parent.parent
+        / "scripts"
+        / "seed_one8_realistic.py"
+    )
+    
+    if not script_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Seed script not found at {script_path}",
+        )
+    
+    try:
+        # Run the seeding script
+        result = subprocess.run(
+            [sys.executable, str(script_path)],
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 minute timeout
+        )
+        
+        if result.returncode != 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Seeding failed: {result.stderr}",
+            )
+        
+        return {
+            "message": "✅ One8 realistic data seeding completed",
+            "exit_code": result.returncode,
+            "output": result.stdout[-1000:],  # Last 1000 chars
+            "next_step": (
+                "Trigger optimization: POST /admin/trigger-optimization"
+            ),
+        }
+    
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Seeding script timed out after 5 minutes",
+        ) from None
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Seeding error: {str(e)}",
+        ) from None
+
+
 @app.get("/admin/audit-log", response_model=AdminAuditLogListResponse)
 def get_admin_audit_log(
     _auth: SuperAdminDep,
