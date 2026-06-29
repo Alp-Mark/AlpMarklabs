@@ -211,7 +211,6 @@ def seed_realistic_data(days=90):
     print("")
     
     with engine.connect() as conn:
-        # Start a transaction for the deletion
         trans = conn.begin()
         
         # Get connector_id
@@ -262,13 +261,8 @@ def seed_realistic_data(days=90):
                 else:
                     print(f"   ⚠️  {table}: {e}")
         
-        # Commit the deletions BEFORE starting inserts
-        trans.commit()
         total_deleted = sum(deleted_counts.values())
         print(f"   ✅ Total deleted: {total_deleted:,} rows\n")
-        
-        # Start a new transaction for inserts
-        trans = conn.begin()
         
         # Generate data day by day with realistic patterns
         meta_batch = []
@@ -400,6 +394,7 @@ def seed_realistic_data(days=90):
                     :id, :tenant_id, :connector_id, :external_campaign_id, :campaign_name,
                     :spend_date, :currency, :spend_amount, :synced_at, :created_at, :updated_at
                 )
+                ON CONFLICT DO NOTHING
             """), meta_batch)
         
         if google_batch:
@@ -412,6 +407,7 @@ def seed_realistic_data(days=90):
                     :id, :tenant_id, :connector_id, :external_campaign_id, :campaign_name,
                     :spend_date, :currency, :spend_amount, :synced_at, :created_at, :updated_at
                 )
+                ON CONFLICT DO NOTHING
             """), google_batch)
         
         if orders_batch:
@@ -429,6 +425,7 @@ def seed_realistic_data(days=90):
                         :order_number, :currency, :total_amount, :discount_amount,
                         :shipping_amount, :refund_amount, :is_refunded, :order_created_at, :synced_at
                     )
+                    ON CONFLICT (tenant_id, connector_id, external_order_id) DO NOTHING
                 """), chunk)
         
         # Update connector last_synced_at
@@ -438,7 +435,7 @@ def seed_realistic_data(days=90):
             WHERE id = :cid
         """), {"cid": connector_id, "now": datetime.utcnow()})
         
-        # Commit the insert transaction
+        # Commit transaction
         trans.commit()
         print("   ✅ All data inserted\n")
         
