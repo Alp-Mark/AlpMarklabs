@@ -212,10 +212,6 @@ def calculate_executive_overview(
     prior_period_start = period_start - timedelta(days=period_days)
     prior_period_end = period_start - timedelta(days=1)
 
-    # Always compute mid_date – used for intra-period fallback
-    half_days = period_days // 2
-    mid_date = period_start + timedelta(days=half_days)
-
     prior_revenue_query = (
         select(
             func.coalesce(func.sum(ShopifyOrder.total_amount), 0.0).label(
@@ -242,57 +238,13 @@ def calculate_executive_overview(
         comp_start: date = prior_period_start
         comp_end: date = prior_period_end
     else:
-        # No prior-period data – fall back to intra-period split (second half
-        # vs first half of the current period).
-        first_half_query = (
-            select(
-                func.coalesce(func.sum(ShopifyOrder.total_amount), 0.0).label(
-                    "total_revenue"
-                ),
-                func.coalesce(func.sum(ShopifyOrder.refund_amount), 0.0).label(
-                    "total_refunds"
-                ),
-            )
-            .where(ShopifyOrder.tenant_id == tenant_id)
-            .where(ShopifyOrder.order_created_at >= period_start)
-            .where(ShopifyOrder.order_created_at < mid_date)
-        )
-        first_half_result = db.execute(first_half_query).one()
-        first_half_revenue = float(
-            first_half_result.total_revenue or 0.0
-        ) - float(first_half_result.total_refunds or 0.0)
-
-        second_half_query = (
-            select(
-                func.coalesce(func.sum(ShopifyOrder.total_amount), 0.0).label(
-                    "total_revenue"
-                ),
-                func.coalesce(func.sum(ShopifyOrder.refund_amount), 0.0).label(
-                    "total_refunds"
-                ),
-            )
-            .where(ShopifyOrder.tenant_id == tenant_id)
-            .where(ShopifyOrder.order_created_at >= mid_date)
-            .where(ShopifyOrder.order_created_at <= period_end)
-        )
-        second_half_result = db.execute(second_half_query).one()
-        second_half_revenue = float(
-            second_half_result.total_revenue or 0.0
-        ) - float(second_half_result.total_refunds or 0.0)
-
-        if first_half_revenue > 0:
-            revenue_growth_rate = (
-                (second_half_revenue - first_half_revenue)
-                / first_half_revenue
-                * 100.0
-            )
-            revenue_growth_absolute = second_half_revenue - first_half_revenue
-        else:
-            revenue_growth_rate = None
-            revenue_growth_absolute = None
-        # Comparison period for all delta calculations = first half
-        comp_start = period_start
-        comp_end = mid_date - timedelta(days=1)
+        # No prior-period data – no meaningful comparison available
+        revenue_growth_rate = None
+        revenue_growth_absolute = None
+        # Use prior period dates for comparison (even though empty)
+        # so delta calculations return None consistently
+        comp_start = prior_period_start
+        comp_end = prior_period_end
 
     # Calculate REAL COGS from inventory items (not estimates!)
     # Join line items with inventory to get actual cost_per_unit
