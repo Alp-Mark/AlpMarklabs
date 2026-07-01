@@ -8,6 +8,35 @@ from enum import StrEnum
 from pydantic import BaseModel, ValidationInfo, field_validator
 
 
+def parse_date_param(value: str | None) -> date | None:
+    """Parse a date string in DD/MM/YYYY or YYYY-MM-DD format.
+
+    The frontend sends dates in DD/MM/YYYY format; the ISO standard is
+    YYYY-MM-DD. Both are accepted here.
+
+    Args:
+        value: Date string or None
+
+    Returns:
+        Parsed date or None
+
+    Raises:
+        ValueError: If the string cannot be parsed in either format
+    """
+    if value is None:
+        return None
+    # Try DD/MM/YYYY first (frontend format)
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return date.fromisoformat(value) if fmt == "%Y-%m-%d" else date(
+                int(value[6:10]), int(value[3:5]), int(value[0:2])
+            )
+        except (ValueError, IndexError):
+            continue
+    msg = f"Cannot parse date '{value}': expected DD/MM/YYYY or YYYY-MM-DD"
+    raise ValueError(msg)
+
+
 class DateWindow(StrEnum):
     """Predefined date window presets."""
 

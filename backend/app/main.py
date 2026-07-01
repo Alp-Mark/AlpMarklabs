@@ -10785,8 +10785,8 @@ def get_executive_trend(
         date_utils.DateWindow.NINETY_DAYS,
         description="Preset date window",
     ),
-    start_date: date | None = Query(None),  # noqa: B008
-    end_date: date | None = Query(None),  # noqa: B008
+    start_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
+    end_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
 ) -> ExecutiveTrendResponse:
     """Get executive KPI trend (time-series) for a tenant.
 
@@ -10822,9 +10822,11 @@ def get_executive_trend(
     if not membership:
         raise HTTPException(status_code=403, detail="Access denied to this tenant")
 
-    # Parse date range
+    # Parse date range – accept DD/MM/YYYY or YYYY-MM-DD from frontend
+    parsed_start = date_utils.parse_date_param(start_date)
+    parsed_end = date_utils.parse_date_param(end_date)
     params = date_utils.DateRangeParams(
-        window=window, start_date=start_date, end_date=end_date
+        window=window, start_date=parsed_start, end_date=parsed_end
     )
     period_start, period_end = date_utils.calculate_date_range(params)
 
@@ -10917,8 +10919,8 @@ def get_growth_trend(
         date_utils.DateWindow.NINETY_DAYS,
         description="Preset date window",
     ),
-    start_date: date | None = Query(None),  # noqa: B008
-    end_date: date | None = Query(None),  # noqa: B008
+    start_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
+    end_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
 ) -> GrowthTrendResponse:
     """Get growth channel trends (time-series) for a tenant.
 
@@ -10954,9 +10956,11 @@ def get_growth_trend(
     if not membership:
         raise HTTPException(status_code=403, detail="Access denied to this tenant")
 
-    # Parse date range
+    # Parse date range – accept DD/MM/YYYY or YYYY-MM-DD from frontend
+    parsed_start = date_utils.parse_date_param(start_date)
+    parsed_end = date_utils.parse_date_param(end_date)
     params = date_utils.DateRangeParams(
-        window=window, start_date=start_date, end_date=end_date
+        window=window, start_date=parsed_start, end_date=parsed_end
     )
     period_start, period_end = date_utils.calculate_date_range(params)
 
@@ -11030,8 +11034,8 @@ def get_retention_trend(
         date_utils.DateWindow.NINETY_DAYS,
         description="Preset date window",
     ),
-    start_date: date | None = Query(None),  # noqa: B008
-    end_date: date | None = Query(None),  # noqa: B008
+    start_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
+    end_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
 ) -> RetentionTrendResponse:
     """Get retention metrics trend (time-series) for a tenant.
 
@@ -11067,9 +11071,11 @@ def get_retention_trend(
     if not membership:
         raise HTTPException(status_code=403, detail="Access denied to this tenant")
 
-    # Parse date range
+    # Parse date range – accept DD/MM/YYYY or YYYY-MM-DD from frontend
+    parsed_start = date_utils.parse_date_param(start_date)
+    parsed_end = date_utils.parse_date_param(end_date)
     params = date_utils.DateRangeParams(
-        window=window, start_date=start_date, end_date=end_date
+        window=window, start_date=parsed_start, end_date=parsed_end
     )
     period_start, period_end = date_utils.calculate_date_range(params)
 
@@ -11117,8 +11123,8 @@ def get_cost_driver_trend(
         date_utils.DateWindow.NINETY_DAYS,
         description="Preset date window",
     ),
-    start_date: date | None = Query(None),  # noqa: B008
-    end_date: date | None = Query(None),  # noqa: B008
+    start_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
+    end_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
 ) -> CostDriverTrendResponse:
     """Get cost driver trend (time-series) for a tenant.
 
@@ -11154,9 +11160,11 @@ def get_cost_driver_trend(
     if not membership:
         raise HTTPException(status_code=403, detail="Access denied to this tenant")
 
-    # Parse date range
+    # Parse date range – accept DD/MM/YYYY or YYYY-MM-DD from frontend
+    parsed_start = date_utils.parse_date_param(start_date)
+    parsed_end = date_utils.parse_date_param(end_date)
     params = date_utils.DateRangeParams(
-        window=window, start_date=start_date, end_date=end_date
+        window=window, start_date=parsed_start, end_date=parsed_end
     )
     period_start, period_end = date_utils.calculate_date_range(params)
 
@@ -11205,8 +11213,8 @@ def get_margin_drift_trend(
         date_utils.DateWindow.NINETY_DAYS,
         description="Preset date window",
     ),
-    start_date: date | None = Query(None),  # noqa: B008
-    end_date: date | None = Query(None),  # noqa: B008
+    start_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
+    end_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
 ) -> MarginDriftTrendResponse:
     """Get margin drift trend (time-series) for a tenant.
 
@@ -11242,9 +11250,11 @@ def get_margin_drift_trend(
     if not membership:
         raise HTTPException(status_code=403, detail="Access denied to this tenant")
 
-    # Parse date range
+    # Parse date range – accept DD/MM/YYYY or YYYY-MM-DD from frontend
+    parsed_start = date_utils.parse_date_param(start_date)
+    parsed_end = date_utils.parse_date_param(end_date)
     params = date_utils.DateRangeParams(
-        window=window, start_date=start_date, end_date=end_date
+        window=window, start_date=parsed_start, end_date=parsed_end
     )
     period_start, period_end = date_utils.calculate_date_range(params)
 
@@ -11294,8 +11304,8 @@ def get_inventory_risk_trend(
         date_utils.DateWindow.NINETY_DAYS,
         description="Preset date window",
     ),
-    start_date: date | None = Query(None),  # noqa: B008
-    end_date: date | None = Query(None),  # noqa: B008
+    start_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
+    end_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
 ) -> InventoryRiskTrendResponse:
     """Get inventory risk trend (time-series) for a tenant.
 
@@ -11331,9 +11341,11 @@ def get_inventory_risk_trend(
     if not membership:
         raise HTTPException(status_code=403, detail="Access denied to this tenant")
 
-    # Parse date range
+    # Parse date range – accept DD/MM/YYYY or YYYY-MM-DD from frontend
+    parsed_start = date_utils.parse_date_param(start_date)
+    parsed_end = date_utils.parse_date_param(end_date)
     params = date_utils.DateRangeParams(
-        window=window, start_date=start_date, end_date=end_date
+        window=window, start_date=parsed_start, end_date=parsed_end
     )
     period_start, period_end = date_utils.calculate_date_range(params)
 
@@ -11405,8 +11417,8 @@ def get_operational_impact_trend(
         date_utils.DateWindow.NINETY_DAYS,
         description="Preset date window",
     ),
-    start_date: date | None = Query(None),  # noqa: B008
-    end_date: date | None = Query(None),  # noqa: B008
+    start_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
+    end_date: str | None = Query(None, description="DD/MM/YYYY or YYYY-MM-DD"),  # noqa: B008
 ) -> OperationalImpactTrendResponse:
     """Get operational impact trend (time-series) for a tenant.
 
@@ -11442,9 +11454,11 @@ def get_operational_impact_trend(
     if not membership:
         raise HTTPException(status_code=403, detail="Access denied to this tenant")
 
-    # Parse date range
+    # Parse date range – accept DD/MM/YYYY or YYYY-MM-DD from frontend
+    parsed_start = date_utils.parse_date_param(start_date)
+    parsed_end = date_utils.parse_date_param(end_date)
     params = date_utils.DateRangeParams(
-        window=window, start_date=start_date, end_date=end_date
+        window=window, start_date=parsed_start, end_date=parsed_end
     )
     period_start, period_end = date_utils.calculate_date_range(params)
 
