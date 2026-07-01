@@ -93,7 +93,13 @@ def calculate_date_range(params: DateRangeParams) -> tuple[date, date]:
     """
     today = date.today()
 
-    # Custom window: use provided dates
+    # If explicit dates are provided, always use them — regardless of window preset.
+    # This allows the frontend to send start_date + end_date without having to
+    # also set window=custom explicitly.
+    if params.start_date is not None and params.end_date is not None:
+        return params.start_date, params.end_date
+
+    # Custom window: use provided dates (explicit window=custom path)
     if params.window == DateWindow.CUSTOM:
         if params.start_date is None or params.end_date is None:
             msg = "CUSTOM window requires start_date and end_date"
