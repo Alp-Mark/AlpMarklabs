@@ -3206,19 +3206,19 @@ def seed_one8_realistic(
         from seed_one8_realistic import seed_realistic_data
         
         # Run the seeding function
-        seed_realistic_data(days=90)
-        
+        seed_realistic_data(days=120)
+
         return {
-            "message": "✅ One8 realistic data seeding completed",
+            "message": "\u2705 One8 realistic data seeding completed",
             "details": {
-                "days_seeded": 90,
+                "days_seeded": 120,
                 "patterns": [
                     "Cricket season spikes (IPL, World Cup)",
                     "Diwali peak (2x sales)",
                     "Weekend patterns (Fri-Sun +25-40%)",
-                    "Campaign bursts with diminishing returns",
-                    "Realistic spend-to-conversion saturation curves",
-                    "Day-to-day variance and noise"
+                    "Independent Meta/Google campaign cycles",
+                    "CAC-driven spend\u2192conversion (no Hill params pre-set)",
+                    "Loyal customer pool (25% repeat buyers)",
                 ]
             },
             "next_step": "Trigger optimization: POST /admin/optimization-engine/trigger"
@@ -11781,48 +11781,5 @@ def delete_role(
     
     db.delete(role)
     db.commit()
-
-
-# ── One8 realistic seed (runs inside Railway, no proxy issues) ─────────────────
-
-@app.post("/admin/seed-one8-realistic")
-def trigger_one8_realistic_seed(
-    _auth: SuperAdminDep,
-) -> dict[str, Any]:
-    """
-    Trigger One8 realistic data seed inside the Railway container.
-
-    Runs seed_one8_realistic.py as a background subprocess so the endpoint
-    returns immediately. Check Railway logs for progress output.
-    Super-admin only.
-    """
-    import subprocess
-    import sys
-    from pathlib import Path
-
-    script_path = (
-        Path(__file__).parent.parent.parent / "scripts" / "seed_one8_realistic.py"
-    )
-    if not script_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Seed script not found at {script_path}",
-        )
-
-    proc = subprocess.Popen(  # noqa: S603
-        [sys.executable, str(script_path)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-
-    return {
-        "status": "started",
-        "pid": proc.pid,
-        "script": str(script_path),
-        "message": (
-            "Seed is running inside Railway. "
-            "Tail logs: railway logs --service AlpMarklabs"
-        ),
-    }
 
 
