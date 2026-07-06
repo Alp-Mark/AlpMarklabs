@@ -620,6 +620,167 @@ def seed_realistic_data(days: int = 120) -> None:
         """), cost_rows)
     print("   ✅ 4 cost input rows seeded\n")
 
+    # ── Step 6: inventory items + order line items (One8 × Agilitas Sports) ───
+    # Agilitas Sports = domestic Indian manufacturer (no import duty).
+    # Costs reflect Indian contract manufacturing rates for premium sportswear.
+    # SKU cost% range: 28-36% → weighted avg ~33% (slightly below blanket 35%).
+    print("📦 Seeding One8 × Agilitas product catalog...")
+
+    # (sku, product_title, variant_title, sell_price, cost_per_unit, stock)
+    CATALOG: list[tuple[str, str, str, float, float, int]] = [
+        # ── Apparel ──────────────────────────────────────────────────────────
+        ("ONE8-TR-WHT-M",  "Performance Training Tee",        "White / M",   1_799, 504,  800),
+        ("ONE8-TR-BLK-M",  "Performance Training Tee",        "Black / M",   1_799, 504,  950),
+        ("ONE8-VK-JRY-M",  "VK Signature Cricket Jersey",     "Blue / M",    2_999, 960,  600),
+        ("ONE8-TP-GRY-M",  "One8 Track Pants",                "Grey / M",    2_499, 800,  700),
+        ("ONE8-SH-BLK-M",  "One8 Training Shorts",            "Black / M",   1_499, 450,  850),
+        ("ONE8-TS-COMBO",  "One8 Training Set (Tee + Pants)", "Navy / M",    3_999, 1_260, 400),
+        # ── Outerwear ─────────────────────────────────────────────────────────
+        ("ONE8-JK-NVY-M",  "One8 Training Jacket",            "Navy / M",    6_499, 2_275, 350),
+        ("ONE8-WB-BLK-M",  "One8 Windbreaker",                "Black / M",   4_999, 1_750, 300),
+        # ── Footwear ──────────────────────────────────────────────────────────
+        ("ONE8-RUN-WHT-9", "One8 Running Shoes",              "White / UK9", 5_999, 2_100, 500),
+        ("ONE8-TRN-BLK-9", "One8 Training Shoes",             "Black / UK9", 4_499, 1_575, 450),
+        # ── Accessories ───────────────────────────────────────────────────────
+        ("ONE8-CAP-VK",    "VK Cricket Cap",                  "Navy Blue",     999,   280, 1_200),
+        ("ONE8-BAG-GYM",   "One8 Gym Bag",                    "Black",       2_499,   875,  600),
+        ("ONE8-SOCK-3PK",  "One8 Sports Socks 3-Pack",        "White",         699,   210, 2_000),
+        ("ONE8-WBAND",     "One8 Wristband Pack (2pcs)",      "Blue",          499,   150, 1_500),
+    ]
+
+    # Seed inventory items
+    inv_rows = []
+    for sku, title, variant, _sell_price, cost, stock in CATALOG:
+        inv_rows.append({
+            "id":                         str(uuid.uuid4()),
+            "tenant_id":                  ONE8_TENANT_ID,
+            "connector_id":               connector_id,
+            "external_inventory_item_id": f"agilitas_{sku}",
+            "sku":                        sku,
+            "product_title":              title,
+            "variant_title":              variant,
+            "available_quantity":         stock,
+            "cost_per_unit":              float(cost),
+            "synced_at":                  datetime.utcnow(),
+        })
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "DELETE FROM shopify_inventory_items WHERE tenant_id = :tid"
+        ), {"tid": ONE8_TENANT_ID})
+        conn.execute(text("""
+            INSERT INTO shopify_inventory_items (
+                id, tenant_id, connector_id, external_inventory_item_id,
+                sku, product_title, variant_title, available_quantity,
+                cost_per_unit, synced_at
+            ) VALUES (
+                :id, :tenant_id, :connector_id, :external_inventory_item_id,
+                :sku, :product_title, :variant_title, :available_quantity,
+                :cost_per_unit, :synced_at
+            ) ON CONFLICT DO NOTHING
+        """), inv_rows)
+    print(f"   ✅ {len(CATALOG)} SKUs seeded")
+
+    # Assign line items to all orders in 500-row batches
+    # Strategy: bucket order by total_amount → pick primary SKU by price range
+    #           add an accessory 35% of the time for realism.
+    print("   Creating line items for all orders...")
+
+    # Segment catalog by price tier
+    primary_low   = [c for c in CATALOG if c[3] <= 2_000]   # ≤₹2k
+    primary_mid   = [c for c in CATALOG if 2_001 <= c[3] <= 4_500]
+    primary_high  = [c for c in CATALOG if c[3] > 4_500]
+    accessories   = [c for c in CATALOG if c[3] <= 2_500 and c[0].startswith("ONE8-")
+                     and c[0] in {"ONE8-CAP-VK", "ONE8-SOCK-3PK", "ONE8-WBAND",
+                                  "ONE8-BAG-GYM"}]
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "DELETE FROM shopify_order_line_items WHERE tenant_id = :tid"
+        ), {"tid": ONE8_TENANT_ID})
+
+    # Fetch all orders (id, total_amount, order_created_at) in batches
+    all_order_rows = []
+    with engine.connect() as conn:
+        offset = 0
+        while True:
+            rows = conn.execute(text(
+                "SELECT id, total_amount, order_created_at "
+                "FROM shopify_orders WHERE tenant_id = :tid "
+                "ORDER BY order_created_at LIMIT 2000 OFFSET :offset"
+            ), {"tid": ONE8_TENANT_ID, "offset": offset}).fetchall()
+            if not rows:
+                break
+            all_order_rows.extend(rows)
+            offset += 2000
+
+    line_items_batch: list[dict] = []
+    total_li = 0
+
+    for order_id, order_total, order_created_at in all_order_rows:
+        if order_total <= 2_200:
+            pool = primary_low if primary_low else primary_mid
+        elif order_total <= 5_500:
+            pool = primary_mid if primary_mid else primary_high
+        else:
+            pool = primary_high if primary_high else primary_mid
+
+        primary = random.choice(pool)
+        items_for_order = [(primary, 1)]
+
+        # Add accessory ~35% of the time
+        if random.random() < 0.35 and accessories:
+            acc = random.choice(accessories)
+            if acc[0] != primary[0]:
+                items_for_order.append((acc, 1))
+
+        for idx, (cat_row, qty) in enumerate(items_for_order):
+            sku, title, variant, sell_price, _, _ = cat_row
+            line_items_batch.append({
+                "id":               str(uuid.uuid4()),
+                "tenant_id":        ONE8_TENANT_ID,
+                "order_id":         order_id,
+                "line_item_index":  idx,
+                "sku":              sku,
+                "product_title":    title,
+                "variant_title":    variant,
+                "quantity":         qty,
+                "unit_price":       float(sell_price),
+                "order_created_at": order_created_at,
+            })
+            total_li += 1
+
+        if len(line_items_batch) >= 500:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    INSERT INTO shopify_order_line_items (
+                        id, tenant_id, order_id, line_item_index,
+                        sku, product_title, variant_title,
+                        quantity, unit_price, order_created_at
+                    ) VALUES (
+                        :id, :tenant_id, :order_id, :line_item_index,
+                        :sku, :product_title, :variant_title,
+                        :quantity, :unit_price, :order_created_at
+                    ) ON CONFLICT DO NOTHING
+                """), line_items_batch)
+            line_items_batch = []
+
+    if line_items_batch:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO shopify_order_line_items (
+                    id, tenant_id, order_id, line_item_index,
+                    sku, product_title, variant_title,
+                    quantity, unit_price, order_created_at
+                ) VALUES (
+                    :id, :tenant_id, :order_id, :line_item_index,
+                    :sku, :product_title, :variant_title,
+                    :quantity, :unit_price, :order_created_at
+                ) ON CONFLICT DO NOTHING
+            """), line_items_batch)
+
+    print(f"   ✅ {total_li:,} line items created ({total_li / len(all_order_rows):.1f} avg/order)\n")
+
     print("   ✅ Done\n")
 
     # ── Summary ───────────────────────────────────────────────────────────────

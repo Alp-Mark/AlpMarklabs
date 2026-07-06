@@ -9,3 +9,4 @@ ignore = []
 
 [lint.per-file-ignores]
 "backend/alembic/versions/*.py" = ["E501"]
+"scripts/*.py" = ["E501"]
