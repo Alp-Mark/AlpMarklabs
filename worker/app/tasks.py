@@ -267,13 +267,33 @@ def run_executive_kpi_computation_job(
                 2,
             )
 
+            # Read COGS % from cost_inputs (Finance Controller configures this).
+            # Falls back to 0 if not configured — CM will show as marketing margin only.
+            cogs_input = db.scalar(
+                select(CostInput).where(
+                    CostInput.tenant_id == tenant.id,
+                    CostInput.input_type == "cogs",
+                    CostInput.is_active.is_(True),
+                )
+            )
+            cogs_pct: float = (
+                cogs_input.amount
+                if cogs_input is not None and cogs_input.unit == "pct_of_revenue"
+                else 0.0
+            )
+            cogs_amount = round(revenue_amount * cogs_pct / 100.0, 2)
+
             blended_roas = (
                 round(revenue_amount / ad_spend_amount, 2)
                 if ad_spend_amount > 0
                 else 0.0
             )
             contribution_margin_pct = (
-                round(((revenue_amount - ad_spend_amount) / revenue_amount) * 100, 2)
+                round(
+                    ((revenue_amount - cogs_amount - ad_spend_amount) / revenue_amount)
+                    * 100,
+                    2,
+                )
                 if revenue_amount > 0
                 else 0.0
             )
@@ -1962,7 +1982,20 @@ def run_segment_margin_computation_job(
                 acquisition_cost = (
                     total_ad_spend if segment_type == "new" else 0.0
                 )
-                cogs = 0.0  # Phase 1: cost inputs not yet available
+                # Read COGS % from cost_inputs; falls back to 0 if not configured
+                seg_cogs_input = db.scalar(
+                    select(CostInput).where(
+                        CostInput.tenant_id == tenant.id,
+                        CostInput.input_type == "cogs",
+                        CostInput.is_active.is_(True),
+                    )
+                )
+                cogs = (
+                    revenue * (seg_cogs_input.amount / 100.0)
+                    if seg_cogs_input is not None
+                    and seg_cogs_input.unit == "pct_of_revenue"
+                    else 0.0
+                )
                 margin_amount = (
                     revenue - cogs - shipping_cost - returns_cost - acquisition_cost
                 )
@@ -2429,9 +2462,24 @@ def run_cost_driver_computation_job(
 
             ad_spend = meta_spend + google_spend
 
+            # Read COGS % from cost_inputs (Finance Controller configures this)
+            driver_cogs_input = db.scalar(
+                select(CostInput).where(
+                    CostInput.tenant_id == tenant.id,
+                    CostInput.input_type == "cogs",
+                    CostInput.is_active.is_(True),
+                )
+            )
+            cogs_amount_driver = (
+                revenue * (driver_cogs_input.amount / 100.0)
+                if driver_cogs_input is not None
+                and driver_cogs_input.unit == "pct_of_revenue"
+                else 0.0
+            )
+
             # (driver_type, amount, source_platform, last_updated_at)
             driver_defs: list[tuple[str, float, str, datetime]] = [
-                ("cogs", 0.0, "manual_entry", current_time),
+                ("cogs", cogs_amount_driver, "cost_inputs", current_time),
                 ("shipping", shipping, "shopify", shopify_last_synced),
                 ("returns", returns_cost, "shopify", shopify_last_synced),
                 ("discounts", discounts, "shopify", shopify_last_synced),

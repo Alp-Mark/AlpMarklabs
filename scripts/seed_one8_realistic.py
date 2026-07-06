@@ -559,6 +559,67 @@ def seed_realistic_data(days: int = 120) -> None:
             "UPDATE connector_integrations SET last_synced_at = :now WHERE id = :cid"
         ), {"cid": connector_id, "now": datetime.utcnow()})
 
+    # ── Step 5: cost inputs (realistic One8 sportswear economics) ─────────────
+    # These drive Contribution Margin and CAC Payback on the dashboard.
+    # Source: premium Indian D2C sportswear benchmarks (PUMA collab tier).
+    print("💰 Seeding cost inputs...")
+    cost_rows = [
+        {
+            "id":            str(uuid.uuid4()),
+            "tenant_id":     ONE8_TENANT_ID,
+            "input_type":    "cogs",
+            "tier_label":    "Product cost — apparel & accessories (35% of revenue)",
+            "amount":        35.0,
+            "unit":          "pct_of_revenue",
+            "is_active":     True,
+            "effective_date": date(2026, 1, 1),
+        },
+        {
+            "id":            str(uuid.uuid4()),
+            "tenant_id":     ONE8_TENANT_ID,
+            "input_type":    "shipping",
+            "tier_label":    "Domestic fulfillment — Delhivery/Shiprocket flat rate",
+            "amount":        150.0,
+            "unit":          "per_order",
+            "is_active":     True,
+            "effective_date": date(2026, 1, 1),
+        },
+        {
+            "id":            str(uuid.uuid4()),
+            "tenant_id":     ONE8_TENANT_ID,
+            "input_type":    "return_processing",
+            "tier_label":    "Reverse logistics + QC + restocking per return",
+            "amount":        120.0,
+            "unit":          "per_order",
+            "is_active":     True,
+            "effective_date": date(2026, 1, 1),
+        },
+        {
+            "id":            str(uuid.uuid4()),
+            "tenant_id":     ONE8_TENANT_ID,
+            "input_type":    "ad_spend_vat",
+            "tier_label":    "GST on digital advertising (India statutory 18%)",
+            "amount":        18.0,
+            "unit":          "pct_of_spend",
+            "is_active":     True,
+            "effective_date": date(2026, 1, 1),
+        },
+    ]
+    with engine.begin() as conn:
+        conn.execute(text("""
+            DELETE FROM cost_inputs WHERE tenant_id = :tid
+        """), {"tid": ONE8_TENANT_ID})
+        conn.execute(text("""
+            INSERT INTO cost_inputs (
+                id, tenant_id, input_type, tier_label,
+                amount, unit, is_active, effective_date
+            ) VALUES (
+                :id, :tenant_id, :input_type, :tier_label,
+                :amount, :unit, :is_active, :effective_date
+            )
+        """), cost_rows)
+    print("   ✅ 4 cost input rows seeded\n")
+
     print("   ✅ Done\n")
 
     # ── Summary ───────────────────────────────────────────────────────────────
