@@ -11,6 +11,7 @@ without needing actual platform connections.
 """
 
 import logging
+import math
 import random
 import uuid
 from datetime import date, datetime, timedelta
@@ -26,21 +27,119 @@ logger = logging.getLogger(__name__)
 # One8 tenant configuration (test/demo tenant)
 ONE8_TENANT_ID = "23165fa5-150b-4b6c-a637-b3dd24532c4d"
 
-# Daily generation parameters (realistic for One8 brand)
-DAILY_PARAMS = {
-    "orders_min": 150,
-    "orders_max": 350,
-    "weekend_multiplier": 1.3,  # 30% more orders on weekends
-    "avg_order_value": 6500,  # INR
-    "aov_std_dev": 3000,
-    "meta_spend_min": 150000,  # INR per day
-    "meta_spend_max": 250000,
-    "google_spend_min": 80000,
-    "google_spend_max": 150000,
-    "return_rate": 0.12,  # 12% returns
-    "refund_delay_days_min": 3,
-    "refund_delay_days_max": 10,
+# ── One8 brand business parameters (must match scripts/seed_one8_realistic.py) ────
+# Observable business KPIs only — no Hill curve parameters.
+# The optimizer discovers the saturation curves from the data we generate here.
+ONE8_BRAND = {
+    "meta_base_spend":   180_000,
+    "google_base_spend": 110_000,
+    "meta_base_cac":   920,
+    "google_base_cac": 650,
+    "meta_cac_at_2x_spend_increase_pct":   30,
+    "google_cac_at_2x_spend_increase_pct": 45,
+    "organic_orders_per_day": 50,
+    "base_aov":        6_500,
+    "aov_std_dev":     2_500,
+    "return_rate":     0.12,
+    "refund_min_days": 3,
+    "refund_max_days": 10,
+    "loyal_pool_size":    2_000,
+    "repeat_order_share": 0.25,
 }
+
+# Campaign cycle epochs — same as seed script so daily data continues the pattern
+_META_EPOCH   = date(2026, 1, 1)
+_GOOGLE_EPOCH = date(2026, 1, 10)
+
+# Loyal customer pool — same ID format as seed
+_LOYAL_POOL = [f"loyal_{i:05d}" for i in range(1, int(ONE8_BRAND["loyal_pool_size"]) + 1)]
+
+
+# ── Helpers (identical logic to seed script) ───────────────────────────────────
+
+def _get_seasonality_multiplier(d: date) -> float:
+    month, day = d.month, d.day
+    if (month == 10 and day >= 24) or (month == 11 and day <= 15):
+        gap = abs((datetime(d.year, 11, 1).date() - d).days)
+        if gap <= 3:
+            return 2.0
+        if gap <= 10:
+            return 1.6
+        return 1.3
+    if month in (3, 4, 5):
+        return 1.5
+    if month == 10 and day < 24:
+        return 1.4
+    if (month == 12 and day >= 20) or (month == 1 and day <= 10):
+        return 1.3
+    if month == 2 and 10 <= day <= 15:
+        return 1.2
+    if month in (6, 7, 8):
+        return 0.85
+    return 1.0
+
+
+def _get_weekend_multiplier(d: date) -> float:
+    wd = d.weekday()
+    if wd == 4:
+        return 1.25
+    if wd == 5:
+        return 1.40
+    if wd == 6:
+        return 1.35
+    return 1.0
+
+
+def _meta_campaign_phase(d: date) -> float:
+    phase = (d - _META_EPOCH).days % 45
+    if 3 <= phase <= 16:
+        return 1.9
+    if phase <= 22:
+        return 1.3
+    return 1.0
+
+
+def _google_campaign_phase(d: date) -> float:
+    phase = (d - _GOOGLE_EPOCH).days % 33
+    if 12 <= phase <= 21:
+        return 1.6
+    if phase <= 26:
+        return 1.15
+    return 1.0
+
+
+def _paid_conversions(spend: int | float, base_spend: int | float,
+                      base_cac: int | float,
+                      cac_increase_at_2x_pct: int | float) -> int:
+    """CAC-driven conversions with diminishing returns. No Hill curve params."""
+    if spend <= 0:
+        return 0
+    cac_at_2x     = 1.0 + cac_increase_at_2x_pct / 100.0
+    exponent      = math.log(cac_at_2x) / math.log(2)
+    effective_cac = base_cac * (spend / base_spend) ** exponent
+    return max(0, int(spend / effective_cac))
+
+
+def _pick_customer_id() -> str:
+    if random.random() < ONE8_BRAND["repeat_order_share"]:
+        return random.choice(_LOYAL_POOL)
+    return f"new_{uuid.uuid4().hex[:10]}"
+
+
+def _seasonal_aov(d: date) -> int:
+    season = _get_seasonality_multiplier(d)
+    if season >= 2.0:
+        mult = 1.30
+    elif season >= 1.5:
+        mult = 1.10
+    elif season <= 0.85:
+        mult = 0.92
+    else:
+        mult = 1.0
+    return max(
+        1_000,
+        int(random.gauss(ONE8_BRAND["base_aov"] * mult, ONE8_BRAND["aov_std_dev"])),
+    )
 
 # Campaign names (consistent with seed data)
 META_CAMPAIGNS = [
@@ -79,99 +178,121 @@ def generate_daily_orders(
     db: Session, connector_id: str, target_date: date
 ) -> dict[str, Any]:
     """
-    Generate realistic orders for a specific date.
-    
-    Returns summary stats.
-    """
-    # Determine order volume based on day of week
-    is_weekend = target_date.weekday() >= 5
-    multiplier = DAILY_PARAMS["weekend_multiplier"] if is_weekend else 1.0
+    Generate realistic orders for target_date using the CAC-driven model.
 
-    num_orders = random.randint(
-        int(DAILY_PARAMS["orders_min"] * multiplier),
-        int(DAILY_PARAMS["orders_max"] * multiplier),
+    Paid conversions are derived from today's ad spend via the same CAC model
+    as the seed script so the optimizer sees a consistent data-generating process.
+    Seasonality lives in the organic channel only, keeping paid curves clean.
+    """
+    # Spend for today (same campaign-phase logic as seed)
+    meta_spend   = max(0, int(
+        ONE8_BRAND["meta_base_spend"]
+        * _meta_campaign_phase(target_date)
+        * random.uniform(0.85, 1.15)
+        * (0.88 if target_date.weekday() in (5, 6) else 1.0)
+    ))
+    google_spend = max(0, int(
+        ONE8_BRAND["google_base_spend"]
+        * _google_campaign_phase(target_date)
+        * random.uniform(0.88, 1.12)
+        * (0.92 if target_date.weekday() in (5, 6) else 1.0)
+    ))
+
+    # Paid conversions from CAC model (no Hill curve parameters)
+    meta_paid   = _paid_conversions(
+        meta_spend,
+        ONE8_BRAND["meta_base_spend"],
+        ONE8_BRAND["meta_base_cac"],
+        ONE8_BRAND["meta_cac_at_2x_spend_increase_pct"],
     )
+    google_paid = _paid_conversions(
+        google_spend,
+        ONE8_BRAND["google_base_spend"],
+        ONE8_BRAND["google_base_cac"],
+        ONE8_BRAND["google_cac_at_2x_spend_increase_pct"],
+    )
+
+    # Organic: ALL seasonality and weekend uplift lives here
+    organic = max(0, int(
+        ONE8_BRAND["organic_orders_per_day"]
+        * _get_seasonality_multiplier(target_date)
+        * _get_weekend_multiplier(target_date)
+        * random.uniform(0.85, 1.15)
+    ))
+
+    num_orders = max(
+        0,
+        int((meta_paid + google_paid + organic) * random.uniform(0.94, 1.06)),
+    )
+
+    m_phase = _meta_campaign_phase(target_date)
+    g_phase = _google_campaign_phase(target_date)
 
     orders_batch = []
     total_revenue = Decimal("0")
 
     for _ in range(num_orders):
-        # Generate order value (log-normal distribution)
-        aov = max(
-            1000,
-            random.gauss(DAILY_PARAMS["avg_order_value"], DAILY_PARAMS["aov_std_dev"]),
-        )
+        order_value = _seasonal_aov(target_date)
 
-        # Order details
-        subtotal = Decimal(str(aov))
-        shipping = Decimal(str(random.choice([0, 99, 149])))
-        tax = subtotal * Decimal("0.18")  # 18% GST
-        total = subtotal + shipping + tax
+        # Discount during campaign bursts
+        if m_phase >= 1.9:
+            discount = int(order_value * 0.15)
+        elif g_phase >= 1.6:
+            discount = int(order_value * 0.08)
+        else:
+            discount = 0
 
-        # Random timestamp during the day
+        net_value = max(500, order_value - discount)
+
         order_datetime = datetime.combine(target_date, datetime.min.time()).replace(
             hour=random.randint(0, 23),
             minute=random.randint(0, 59),
             second=random.randint(0, 59),
         )
 
-        # Fulfillment status (92% fulfilled, 5% pending, 3% cancelled)
-        fulfillment_status = random.choices(
-            ["fulfilled", "pending", "cancelled"], weights=[0.92, 0.05, 0.03]
-        )[0]
+        ext_id = str(random.randint(10_000_000, 99_999_999))
+        orders_batch.append({
+            "id":                str(uuid.uuid4()),
+            "tenant_id":         ONE8_TENANT_ID,
+            "connector_id":      connector_id,
+            "external_order_id": ext_id,
+            "customer_id":       _pick_customer_id(),
+            "order_number":      ext_id,
+            "currency":          "INR",
+            "total_amount":      float(net_value),
+            "discount_amount":   float(discount),
+            "shipping_amount":   0.0,
+            "refund_amount":     0.0,
+            "is_refunded":       False,
+            "order_created_at":  order_datetime,
+            "synced_at":         datetime.utcnow(),
+        })
+        total_revenue += Decimal(str(net_value))
 
-        financial_status = "paid" if fulfillment_status != "cancelled" else "refunded"
-
-        # Generate unique external_order_id
-        external_order_id = str(random.randint(10000000, 99999999))
-
-        orders_batch.append(
-            {
-                "id": str(uuid.uuid4()),
-                "tenant_id": ONE8_TENANT_ID,
-                "connector_id": connector_id,
-                "external_order_id": external_order_id,
-                "customer_id": f"cust_{random.randint(1000, 99999)}",
-                "order_number": external_order_id,
-                "currency": "INR",
-                "total_amount": float(total),
-                "discount_amount": 0.0,
-                "shipping_amount": float(shipping),
-                "refund_amount": 0.0 if financial_status == "paid" else float(total),
-                "is_refunded": financial_status != "paid",
-                "order_created_at": order_datetime,
-                "synced_at": datetime.utcnow(),
-            }
-        )
-
-        if financial_status == "paid":
-            total_revenue += total
-
-    # Bulk insert
     if orders_batch:
         db.execute(
-            text(
-                """
-            INSERT INTO shopify_orders (
-                id, tenant_id, connector_id, external_order_id, customer_id,
-                order_number, currency, total_amount, discount_amount,
-                shipping_amount, refund_amount, is_refunded, order_created_at, synced_at
-            ) VALUES (
-                :id, :tenant_id, :connector_id, :external_order_id, :customer_id,
-                :order_number, :currency, :total_amount, :discount_amount,
-                :shipping_amount, :refund_amount, :is_refunded,
-                :order_created_at, :synced_at
-            )
-            """
-            ),
+            text("""
+                INSERT INTO shopify_orders (
+                    id, tenant_id, connector_id, external_order_id, customer_id,
+                    order_number, currency, total_amount, discount_amount,
+                    shipping_amount, refund_amount, is_refunded,
+                    order_created_at, synced_at
+                ) VALUES (
+                    :id, :tenant_id, :connector_id, :external_order_id, :customer_id,
+                    :order_number, :currency, :total_amount, :discount_amount,
+                    :shipping_amount, :refund_amount, :is_refunded,
+                    :order_created_at, :synced_at
+                )
+            """),
             orders_batch,
         )
         db.commit()
 
     return {
         "orders_created": len(orders_batch),
-        "revenue": float(total_revenue),
-        "is_weekend": is_weekend,
+        "revenue":        float(total_revenue),
+        "meta_spend":     meta_spend,
+        "google_spend":   google_spend,
     }
 
 
@@ -182,8 +303,8 @@ def generate_daily_refunds(db: Session, connector_id: str) -> dict[str, Any]:
     Simulates the natural delay in returns.
     """
     # Get eligible orders (paid, not refunded, 3-10 days old)
-    min_age = datetime.utcnow() - timedelta(days=DAILY_PARAMS["refund_delay_days_max"])
-    max_age = datetime.utcnow() - timedelta(days=DAILY_PARAMS["refund_delay_days_min"])
+    min_age = datetime.utcnow() - timedelta(days=ONE8_BRAND["refund_max_days"])
+    max_age = datetime.utcnow() - timedelta(days=ONE8_BRAND["refund_min_days"])
 
     eligible_orders = db.execute(
         text(
@@ -204,7 +325,7 @@ def generate_daily_refunds(db: Session, connector_id: str) -> dict[str, Any]:
         return {"refunds_created": 0, "refund_amount": 0.0}
 
     # Select orders for refund based on return rate
-    num_refunds = int(len(eligible_orders) * DAILY_PARAMS["return_rate"])
+    num_refunds = int(len(eligible_orders) * ONE8_BRAND["return_rate"])
     refund_orders = random.sample(
         list(eligible_orders), min(num_refunds, len(eligible_orders))
     )
@@ -268,69 +389,58 @@ def generate_daily_refunds(db: Session, connector_id: str) -> dict[str, Any]:
 def generate_daily_ad_spend(
     db: Session, connector_id: str, target_date: date
 ) -> dict[str, Any]:
-    """Generate daily ad spend for Meta and Google."""
-    meta_batch = []
+    """
+    Generate daily ad spend for Meta and Google.
+    Uses the same independent campaign cycles as the seed script.
+    """
+    meta_batch   = []
     google_batch = []
 
-    # Meta ad spend - distribute across campaigns
-    daily_meta_total = Decimal(
-        str(
-            random.randint(
-                int(DAILY_PARAMS["meta_spend_min"]),
-                int(DAILY_PARAMS["meta_spend_max"]),
-            )
-        )
-    )
+    # Spend derived from campaign phase (same logic as seed)
+    daily_meta_total = max(0, int(
+        ONE8_BRAND["meta_base_spend"]
+        * _meta_campaign_phase(target_date)
+        * random.uniform(0.85, 1.15)
+        * (0.88 if target_date.weekday() in (5, 6) else 1.0)
+    ))
+    daily_google_total = max(0, int(
+        ONE8_BRAND["google_base_spend"]
+        * _google_campaign_phase(target_date)
+        * random.uniform(0.88, 1.12)
+        * (0.92 if target_date.weekday() in (5, 6) else 1.0)
+    ))
 
     for campaign in META_CAMPAIGNS:
-        campaign_spend = daily_meta_total / len(META_CAMPAIGNS)
-        meta_batch.append(
-            {
-                "id": str(uuid.uuid4()),
-                "tenant_id": ONE8_TENANT_ID,
-                "connector_id": connector_id,
-                "external_campaign_id": (
-                    f"meta_{campaign}_{target_date.strftime('%Y%m%d')}"
-                ),
-                "campaign_name": campaign,
-                "spend_date": target_date,
-                "currency": "INR",
-                "spend_amount": float(campaign_spend),
-                "synced_at": datetime.utcnow(),
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
-            }
-        )
-
-    # Google ad spend - distribute across campaigns
-    daily_google_total = Decimal(
-        str(
-            random.randint(
-                int(DAILY_PARAMS["google_spend_min"]),
-                int(DAILY_PARAMS["google_spend_max"]),
-            )
-        )
-    )
+        meta_batch.append({
+            "id":                   str(uuid.uuid4()),
+            "tenant_id":            ONE8_TENANT_ID,
+            "connector_id":         connector_id,
+            "external_campaign_id": f"meta_{campaign}_{target_date.strftime('%Y%m%d')}",
+            "campaign_name":        campaign,
+            "spend_date":           target_date,
+            "currency":             "INR",
+            "spend_amount":         float(daily_meta_total / len(META_CAMPAIGNS)),
+            "synced_at":            datetime.utcnow(),
+            "created_at":           datetime.utcnow(),
+            "updated_at":           datetime.utcnow(),
+        })
 
     for campaign in GOOGLE_CAMPAIGNS:
-        campaign_spend = daily_google_total / len(GOOGLE_CAMPAIGNS)
-        google_batch.append(
-            {
-                "id": str(uuid.uuid4()),
-                "tenant_id": ONE8_TENANT_ID,
-                "connector_id": connector_id,
-                "external_campaign_id": (
+        google_batch.append({
+            "id":                   str(uuid.uuid4()),
+            "tenant_id":            ONE8_TENANT_ID,
+            "connector_id":         connector_id,
+            "external_campaign_id": (
                     f"google_{campaign}_{target_date.strftime('%Y%m%d')}"
                 ),
-                "campaign_name": campaign,
-                "spend_date": target_date,
-                "currency": "INR",
-                "spend_amount": float(campaign_spend),
-                "synced_at": datetime.utcnow(),
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
-            }
-        )
+            "campaign_name":        campaign,
+            "spend_date":           target_date,
+            "currency":             "INR",
+            "spend_amount":         float(daily_google_total / len(GOOGLE_CAMPAIGNS)),
+            "synced_at":            datetime.utcnow(),
+            "created_at":           datetime.utcnow(),
+            "updated_at":           datetime.utcnow(),
+        })
 
     # Insert ad spend
     if meta_batch:
@@ -370,9 +480,9 @@ def generate_daily_ad_spend(
     db.commit()
 
     return {
-        "meta_spend": float(daily_meta_total),
-        "google_spend": float(daily_google_total),
-        "total_spend": float(daily_meta_total + daily_google_total),
+        "meta_spend":   daily_meta_total,
+        "google_spend": daily_google_total,
+        "total_spend":  daily_meta_total + daily_google_total,
     }
 
 
