@@ -6564,13 +6564,19 @@ def get_tenant_recommendations(
     rec_status: str | None = None,
     gap_flag: str | None = None,
     has_outcome: bool | None = None,
+    source: str = "optimization",
 ) -> RecommendationListResponse:
     """FR-071, FR-076, FR-077 / T-062, T-063: List recommendations with filters.
 
+    source: 'optimization' (ML-based, default) or 'threshold' (rule-based).
     gap_flag: filter to "warning" or "escalated" implementation gap status.
     has_outcome: if True, show only recs with outcome_observed_at populated.
     """
-    stmt = select(Recommendation).where(Recommendation.tenant_id == tenant_id)
+    stmt = (
+        select(Recommendation)
+        .where(Recommendation.tenant_id == tenant_id)
+        .where(Recommendation.source == source)
+    )
     if domain is not None:
         stmt = stmt.where(Recommendation.domain == domain)
     if rec_status is not None:
@@ -6584,28 +6590,10 @@ def get_tenant_recommendations(
             stmt = stmt.where(Recommendation.outcome_observed_at.is_(None))
     stmt = stmt.order_by(Recommendation.priority, Recommendation.created_at.desc())
     items = list(db.scalars(stmt))
-    
-    # Filter out low-confidence recommendations (< 20% confidence)
-    MIN_CONFIDENCE = 0.20
-    filtered_items = [
-        r for r in items
-        if r.source == "threshold" or r.confidence_score >= MIN_CONFIDENCE
-    ]
-    
-    # Deduplicate threshold-based recommendations by signal_summary
-    seen_signals: set[str] = set()
-    deduplicated_items = []
-    for r in filtered_items:
-        if r.source == "threshold":
-            if r.signal_summary not in seen_signals:
-                seen_signals.add(r.signal_summary)
-                deduplicated_items.append(r)
-        else:
-            deduplicated_items.append(r)
-    
+
     return RecommendationListResponse(
-        items=[RecommendationResponse.model_validate(r) for r in deduplicated_items],
-        total=len(deduplicated_items),
+        items=[RecommendationResponse.model_validate(r) for r in items],
+        total=len(items),
     )
 
 
