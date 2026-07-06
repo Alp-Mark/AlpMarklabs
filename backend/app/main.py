@@ -7118,6 +7118,168 @@ def create_delegation_rule(
     return rule
 
 
+# ── Per-persona activity log ───────────────────────────────────────────────────
+
+# Action types visible to each persona (prefix-matched against audit_events.action)
+_PERSONA_ACTIONS: dict[str, list[str]] = {
+    "executive": [
+        "recommendation.status_changed",
+        "kpi.executive_snapshot_computed",
+        "kpi.cost_driver_snapshot_computed",
+        "kpi.margin_drift_snapshot_computed",
+        "user.invited", "account.activated",
+        "tenant.created", "tenant.updated",
+        "delegation_rule.created", "delegation_rule.revoked",
+    ],
+    "growth": [
+        "recommendation.status_changed",
+        "kpi.acquisition_metrics_computed",
+        "connector.shopify_orders_synced",
+        "connector.meta_synced", "connector.google_ads_synced",
+    ],
+    "finance": [
+        "cost_input.created", "cost_input.updated", "cost_input.deleted",
+        "cost_input.confirmed",
+        "kpi.cost_driver_snapshot_computed",
+        "kpi.margin_drift_snapshot_computed",
+        "kpi.segment_margin_snapshot_computed",
+    ],
+    "operations": [
+        "kpi.inventory_risk_computed",
+        "kpi.operational_impact_computed",
+        "connector.shopify_inventory_synced",
+    ],
+    "retention": [
+        "kpi.retention_snapshot_computed",
+        "kpi.cohort_return_signal_computed",
+        "recommendation.status_changed",
+    ],
+}
+
+# Human-readable category for each action prefix
+_ACTION_CATEGORY: dict[str, str] = {
+    "recommendation.": "Decision",
+    "cost_input.":     "Configuration",
+    "kpi.":            "System",
+    "connector.":      "Data Sync",
+    "user.":           "Team",
+    "account.":        "Team",
+    "tenant.":         "Team",
+    "delegation_rule.": "Governance",
+    "alert.":          "Alert",
+}
+
+# Human-readable templates for known actions
+_ACTION_MESSAGE: dict[str, str] = {
+    "recommendation.status_changed":         "Recommendation {status}",
+    "kpi.executive_snapshot_computed":       "Executive KPIs refreshed",
+    "kpi.acquisition_metrics_computed":      "Acquisition metrics refreshed",
+    "kpi.retention_snapshot_computed":       "Retention snapshot refreshed",
+    "kpi.cost_driver_snapshot_computed":     "Cost driver snapshot refreshed",
+    "kpi.margin_drift_snapshot_computed":    "Margin drift snapshot refreshed",
+    "kpi.segment_margin_snapshot_computed":  "Segment margin snapshot refreshed",
+    "kpi.inventory_risk_computed":           "Inventory risk snapshot refreshed",
+    "kpi.operational_impact_computed":       "Operational impact snapshot refreshed",
+    "kpi.cohort_return_signal_computed":     "Cohort return signal refreshed",
+    "connector.shopify_orders_synced":       "Shopify orders synced",
+    "connector.shopify_inventory_synced":    "Shopify inventory synced",
+    "connector.meta_synced":                 "Meta Ads synced",
+    "connector.google_ads_synced":           "Google Ads synced",
+    "cost_input.created":                    "Cost input added",
+    "cost_input.updated":                    "Cost input updated",
+    "cost_input.confirmed":                  "Cost input confirmed",
+    "user.invited":                          "Team member invited",
+    "account.activated":                     "Account activated",
+    "tenant.created":                        "Tenant created",
+    "delegation_rule.created":               "Approval authority delegated",
+    "delegation_rule.revoked":               "Delegation revoked",
+}
+
+
+def _fmt_message(action: str, details: dict) -> str:
+    fallback = action.replace(".", " ").replace("_", " ").title()
+    tmpl = _ACTION_MESSAGE.get(action, fallback)
+    if action == "recommendation.status_changed":
+        to_s = details.get("to_status", "")
+        tmpl = tmpl.replace("{status}", str(to_s).replace("_", " ").title())
+    return tmpl
+
+
+def _action_category(action: str) -> str:
+    for prefix, cat in _ACTION_CATEGORY.items():
+        if action.startswith(prefix):
+            return cat
+    return "System"
+
+
+@app.get("/tenants/{tenant_id}/activity-log")
+def get_activity_log(
+    tenant_id: uuid.UUID,
+    auth: IntelRecommendationsViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    persona: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, Any]:
+    """
+    Per-persona activity log.
+
+    Returns audit events filtered to the actions relevant for the given persona.
+    If persona is not specified, all tenant-level events are returned.
+
+    persona options: executive | growth | finance | operations | retention
+    """
+    stmt = (
+        select(AuditEvent)
+        .where(AuditEvent.tenant_id == tenant_id)
+        .order_by(AuditEvent.created_at.desc())
+    )
+
+    if persona and persona in _PERSONA_ACTIONS:
+        allowed = _PERSONA_ACTIONS[persona]
+        stmt = stmt.where(AuditEvent.action.in_(allowed))
+
+    total = db.scalar(
+        select(func.count()).select_from(stmt.subquery())
+    ) or 0
+
+    rows = list(db.scalars(
+        stmt.offset((page - 1) * page_size).limit(page_size)
+    ))
+
+    # Enrich with actor names
+    actor_ids = {r.actor_user_id for r in rows if r.actor_user_id}
+    actors: dict[uuid.UUID, str] = {}
+    if actor_ids:
+        users = db.scalars(select(User).where(User.id.in_(actor_ids)))
+        for u in users:
+            name = f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email
+            actors[u.id] = name
+
+    items = [
+        {
+            "id":          str(r.id),
+            "timestamp":   r.created_at.isoformat(),
+            "actor_name":  actors.get(r.actor_user_id, "System") if r.actor_user_id else "System",
+            "category":    _action_category(r.action),
+            "action":      r.action,
+            "message":     _fmt_message(r.action, r.details or {}),
+            "entity_type": r.entity_type,
+            "entity_id":   r.entity_id,
+            "details":     r.details,
+        }
+        for r in rows
+    ]
+
+    return {
+        "items":     items,
+        "total":     total,
+        "page":      page,
+        "page_size": page_size,
+        "persona":   persona,
+    }
+
+
 @app.get("/tenants/{tenant_id}/members")
 def list_tenant_members(
     tenant_id: uuid.UUID,
