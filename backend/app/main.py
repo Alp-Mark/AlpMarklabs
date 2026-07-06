@@ -2634,6 +2634,49 @@ def trigger_optimization_engine(
         )
 
 
+@app.post("/admin/snapshot-tasks/trigger")
+def trigger_snapshot_tasks(
+    _auth: SuperAdminDep,
+) -> dict[str, Any]:
+    """
+    Queue all three KPI/snapshot computation tasks (super-admin only).
+
+    Populates executive_kpi_snapshots, acquisition_metrics_snapshots,
+    and retention_daily_snapshots from raw order and spend data.
+    """
+    try:
+        from worker.app.celery_app import celery_app
+
+        t1 = celery_app.send_task(
+            "worker.app.tasks.run_executive_kpi_computation_schedule"
+        )
+        t2 = celery_app.send_task(
+            "worker.app.tasks.run_acquisition_metrics_computation_schedule"
+        )
+        t3 = celery_app.send_task(
+            "worker.app.tasks.run_retention_cohort_computation_schedule"
+        )
+        return {
+            "status": "queued",
+            "tasks": {
+                "executive_kpi":       t1.id,
+                "acquisition_metrics": t2.id,
+                "retention_cohort":    t3.id,
+            },
+            "message": "All three snapshot tasks sent to Celery worker.",
+        }
+    except ImportError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Celery not available: {str(e)}",
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to queue snapshot tasks: {str(e)}",
+        ) from e
+
+
 @app.post("/admin/optimization-strategies/seed")
 def seed_optimization_strategies_endpoint(
     _auth: SuperAdminDep,
