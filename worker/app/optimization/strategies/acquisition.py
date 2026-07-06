@@ -795,12 +795,12 @@ class BudgetAllocationOptimizer(BaseOptimizer):
                 change_direction = "increase"
         
         signal_summary = (
-            f"Budget reallocation opportunity detected. {root_cause}. "
-            f"Reallocate to {opt['meta_pct']:.1f}% Meta (₹{opt['meta_spend']:,.0f}/day) "
-            f"and {opt['google_pct']:.1f}% Google (₹{opt['google_spend']:,.0f}/day) "
-            f"for {opt['lift_pct']:.1f}% conversion lift (+{opt.get('daily_revenue_impact', 0):,.0f} ₹/day revenue)"
+            f"Meta efficiency {opt.get('current_meta_efficiency', opt.get('meta_allocation', {}).get('current_efficiency', 0)):.2f}× "
+            f"vs Google {opt.get('current_google_efficiency', opt.get('google_allocation', {}).get('current_efficiency', 0)):.2f}× — "
+            f"reallocate ₹{abs(opt.get('meta_allocation', {}).get('spend_change', 0) or 0):,.0f}/day "
+            f"for +{opt.get('lift_pct', 0):.1f}% conversion lift"
         )
-        
+
         suggested_action = (
             f"{change_direction.capitalize()} {primary_channel} to ₹{opt['meta_spend' if primary_channel == 'Meta' else 'google_spend']:,.0f}/day "
             f"(currently ₹{opt.get('current_meta_spend' if primary_channel == 'Meta' else 'current_google_spend', 0):,.0f}/day). "
@@ -838,7 +838,7 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             rule_id="OPT-BUDGET-001",  # Optimization-based rule ID
             domain="acquisition",
             snapshot_date=today,
-            affected_area="Meta Ads, Google Ads",
+            affected_area=f"{primary_channel} Ads Budget Reallocation",
             signal_summary=signal_summary,
             suggested_action=suggested_action,
             estimated_impact=daily_revenue_impact,  # Daily revenue impact in currency

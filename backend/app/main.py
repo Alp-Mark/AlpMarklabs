@@ -2604,10 +2604,10 @@ def trigger_optimization_engine(
     """Manually trigger optimization engine to generate recommendations (super-admin only)."""
     try:
         # Use Celery to send task to worker (which has scipy installed)
-        from worker.app.celery_app import celery_app
-        
         # Check if optimization engine is enabled
         import os
+
+        from worker.app.celery_app import celery_app
         if os.getenv("ENABLE_OPTIMIZATION_ENGINE", "false").lower() != "true":
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -7116,6 +7116,33 @@ def create_delegation_rule(
     db.commit()
     db.refresh(rule)
     return rule
+
+
+@app.get("/tenants/{tenant_id}/members")
+def list_tenant_members(
+    tenant_id: uuid.UUID,
+    _auth: IntelRecommendationsViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> list[dict[str, Any]]:
+    """List active tenant members — used by the Delegate UI to pick who to delegate to."""
+    rows = db.execute(
+        select(TenantMembership, User)
+        .join(User, TenantMembership.user_id == User.id)
+        .where(
+            TenantMembership.tenant_id == tenant_id,
+            User.is_active.is_(True),
+        )
+        .order_by(TenantMembership.role, User.first_name)
+    ).all()
+    return [
+        {
+            "user_id": str(m.user_id),
+            "name":    f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email,
+            "email":   u.email,
+            "role":    m.role,
+        }
+        for m, u in rows
+    ]
 
 
 @app.get(
