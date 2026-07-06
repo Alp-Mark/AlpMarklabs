@@ -820,14 +820,14 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         else:
             priority = 30  # low
         
-        # Delete existing recommendation for this tenant/rule/date if it exists
-        # (prevents duplicate key error on re-runs)
+        # Delete ALL previous OPT-BUDGET-001 recommendations for this tenant.
+        # We only ever want one current recommendation, not a growing pile
+        # of daily copies that all say the same thing.
         today = date.today()
         self.db.execute(
             delete(Recommendation).where(
                 Recommendation.tenant_id == self.tenant_id,
                 Recommendation.rule_id == "OPT-BUDGET-001",
-                Recommendation.snapshot_date == today,
             )
         )
         self.db.flush()

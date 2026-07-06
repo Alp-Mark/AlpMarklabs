@@ -37,7 +37,7 @@ from backend.app.db.models import (
 from backend.app.db.session import SessionLocal
 from backend.app.recommendations.gap import scan_implementation_gaps
 from backend.app.recommendations.outcome import scan_outcome_observations
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from worker.app.celery_app import celery_app
@@ -3469,32 +3469,35 @@ def run_rule_engine_job(
             rule_input = _build_rule_input(db, tenant, today)
             results = engine.evaluate(rule_input)
             for result in results:
-                existing = db.scalar(
-                    select(Recommendation).where(
+                # Always replace: delete any previous copy of this rule for this
+                # tenant (any date) and insert a fresh one. This prevents the
+                # recommendations page from filling up with near-identical cards
+                # generated on consecutive days.
+                db.execute(
+                    delete(Recommendation).where(
                         Recommendation.tenant_id == tenant.id,
                         Recommendation.rule_id == result.rule_id,
-                        Recommendation.snapshot_date == today,
+                        Recommendation.status == "new",
                     )
                 )
-                if existing is None:
-                    rec = Recommendation(
-                        tenant_id=tenant.id,
-                        rule_id=result.rule_id,
-                        domain=result.domain,
-                        snapshot_date=today,
-                        affected_area=result.affected_area,
-                        signal_summary=result.signal_summary,
-                        suggested_action=result.suggested_action,
-                        estimated_impact=result.estimated_impact,
-                        confidence_level=result.confidence_level,
-                        data_freshness_context=result.data_freshness_context,
-                        priority=result.priority,
-                        impact_score=result.impact_score,
-                        evidence=result.evidence,
-                        status="new",
-                    )
-                    db.add(rec)
-                    recommendations_created += 1
+                rec = Recommendation(
+                    tenant_id=tenant.id,
+                    rule_id=result.rule_id,
+                    domain=result.domain,
+                    snapshot_date=today,
+                    affected_area=result.affected_area,
+                    signal_summary=result.signal_summary,
+                    suggested_action=result.suggested_action,
+                    estimated_impact=result.estimated_impact,
+                    confidence_level=result.confidence_level,
+                    data_freshness_context=result.data_freshness_context,
+                    priority=result.priority,
+                    impact_score=result.impact_score,
+                    evidence=result.evidence,
+                    status="new",
+                )
+                db.add(rec)
+                recommendations_created += 1
         db.commit()
     finally:
         db.close()
