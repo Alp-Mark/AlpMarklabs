@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.db.models import (
     ConnectorIntegration,
+    CostInput,
     GoogleAdSpend,
     MetaAdSpend,
     Recommendation,
@@ -76,8 +77,33 @@ def _get_period_metrics(
         .where(ShopifyOrder.is_refunded == False)  # noqa: E712
     ) or 0
 
-    est_cogs = net_revenue * 0.42
-    est_shipping = order_count * 100.0
+    # Read COGS% and shipping from cost_inputs; fall back to 42% / ₹100 if not set
+    _cogs_input = db.scalar(
+        select(CostInput).where(
+            CostInput.tenant_id == tenant_id,
+            CostInput.input_type == "cogs",
+            CostInput.is_active.is_(True),
+        )
+    )
+    _cogs_pct: float = (
+        _cogs_input.amount
+        if _cogs_input is not None and _cogs_input.unit == "pct_of_revenue"
+        else 42.0
+    )
+    _ship_input = db.scalar(
+        select(CostInput).where(
+            CostInput.tenant_id == tenant_id,
+            CostInput.input_type == "shipping",
+            CostInput.is_active.is_(True),
+        )
+    )
+    _ship_per_order: float = (
+        _ship_input.amount
+        if _ship_input is not None and _ship_input.unit == "per_order"
+        else 100.0
+    )
+    est_cogs = net_revenue * _cogs_pct / 100.0
+    est_shipping = order_count * _ship_per_order
     cm = net_revenue - est_cogs - est_shipping - total_ad_spend
     cm_pct: float | None = (cm / net_revenue * 100.0) if net_revenue > 0 else None
 
@@ -271,7 +297,21 @@ def calculate_executive_overview(
         "start": period_start,
         "end": period_end
     }) or 0.0
-    
+
+    # Fallback: no line items (e.g. seed data) — use cost_inputs or 42% estimate
+    if real_cogs == 0.0:
+        _cogs_input = db.scalar(
+            select(CostInput).where(
+                CostInput.tenant_id == tenant_id,
+                CostInput.input_type == "cogs",
+                CostInput.is_active.is_(True),
+            )
+        )
+        if _cogs_input is not None and _cogs_input.unit == "pct_of_revenue":
+            real_cogs = net_revenue * _cogs_input.amount / 100.0
+        else:
+            real_cogs = net_revenue * 0.42
+
     # Count orders in period for shipping calc
     order_count = db.scalar(
         select(func.count(ShopifyOrder.id))
@@ -280,8 +320,21 @@ def calculate_executive_overview(
         .where(ShopifyOrder.order_created_at <= period_end)
         .where(ShopifyOrder.is_refunded == False)  # noqa: E712
     ) or 0
-    
-    estimated_shipping = order_count * 100.0  # ₹100 per order
+
+    # Read shipping cost from cost_inputs; fall back to ₹100/order if not configured
+    _ship_input = db.scalar(
+        select(CostInput).where(
+            CostInput.tenant_id == tenant_id,
+            CostInput.input_type == "shipping",
+            CostInput.is_active.is_(True),
+        )
+    )
+    _ship_per_order: float = (
+        _ship_input.amount
+        if _ship_input is not None and _ship_input.unit == "per_order"
+        else 100.0
+    )
+    estimated_shipping = order_count * _ship_per_order
     
     # Gross profit = Revenue - REAL COGS
     gross_profit = net_revenue - real_cogs
