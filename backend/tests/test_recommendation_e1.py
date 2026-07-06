@@ -40,6 +40,7 @@ def test_recommendation_has_confidence_score_field(
         confidence_score=0.82,
         data_freshness_context="Last synced 2 hours ago",
         status="new",
+        source="optimization",
     )
     db_session.add(rec)
     db_session.commit()
@@ -66,6 +67,7 @@ def test_recommendation_has_data_sources_field(
         data_sources=["shopify", "meta"],
         data_freshness_context="Last synced 1 day ago",
         status="new",
+        source="optimization",
     )
     db_session.add(rec)
     db_session.commit()
@@ -91,6 +93,7 @@ def test_recommendation_api_returns_confidence_score(
         confidence_score=0.93,
         data_freshness_context="Last synced 30 minutes ago",
         status="new",
+        source="optimization",
     )
     db_session.add(rec)
     db_session.commit()
@@ -125,6 +128,7 @@ def test_recommendation_api_returns_data_sources(
         data_sources=["shopify", "google_ads"],
         data_freshness_context="Last synced 4 hours ago",
         status="new",
+        source="optimization",
     )
     db_session.add(rec)
     db_session.commit()
@@ -157,6 +161,7 @@ def test_recommendation_confidence_score_default(
         confidence_level="medium",
         data_freshness_context="Stale data",
         status="new",
+        source="optimization",
     )
     db_session.add(rec)
     db_session.commit()
@@ -182,6 +187,7 @@ def test_recommendation_data_sources_default_empty(
         confidence_score=0.4,
         data_freshness_context="No recent data",
         status="new",
+        source="optimization",
     )
     db_session.add(rec)
     db_session.commit()
@@ -283,6 +289,7 @@ def test_update_recommendation_status_to_expired_via_api(
         confidence_score=0.3,
         data_freshness_context="Stale",
         status="new",
+        source="optimization",
     )
     db_session.add(rec)
     db_session.commit()
@@ -363,6 +370,7 @@ def test_confidence_level_enum_values() -> None:
             confidence_score=0.5,
             data_freshness_context="test",
             status="new",
+        source="optimization",
         )
         assert rec.confidence_level == level
 

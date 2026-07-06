@@ -3292,6 +3292,7 @@ def test_get_recommendations_returns_seeded_data(client: TestClient) -> None:
             data_freshness_context="1 day old",
             priority=10,
             status="new",
+            source="optimization",
         )
         db.add(rec)
         db.commit()
@@ -3343,6 +3344,7 @@ def test_get_recommendations_domain_filter(client: TestClient) -> None:
                     data_freshness_context="fresh",
                     priority=50,
                     status="new",
+                    source="optimization",
                 )
             )
         db.commit()
