@@ -236,24 +236,27 @@ def generate_daily_refunds(db: Session, connector_id: str) -> dict[str, Any]:
 
         total_refund_amount += Decimal(str(order[2]))
 
-    # Insert refunds
+    # Mark orders as refunded directly on shopify_orders
+    # (there is no separate shopify_refunds table — refunds are tracked
+    # via is_refunded + refund_amount on the orders row)
     if refunds_batch:
-        db.execute(
-            text(
+        for r in refunds_batch:
+            db.execute(
+                text(
+                    """
+                UPDATE shopify_orders
+                SET is_refunded = true,
+                    refund_amount = :refund_amount
+                WHERE id = :order_id
+                  AND tenant_id = :tenant_id
                 """
-            INSERT INTO shopify_refunds (
-                id, tenant_id, connector_id, external_refund_id,
-                order_id, external_order_id,
-                refund_amount, reason, refund_created_at, synced_at, created_at
-            ) VALUES (
-                :id, :tenant_id, :connector_id, :external_refund_id,
-                :order_id, :external_order_id,
-                :refund_amount, :reason, :refund_created_at, :synced_at, :created_at
+                ),
+                {
+                    "refund_amount": r["refund_amount"],
+                    "order_id": r["order_id"],
+                    "tenant_id": ONE8_TENANT_ID,
+                },
             )
-            """
-            ),
-            refunds_batch,
-        )
         db.commit()
 
     return {
