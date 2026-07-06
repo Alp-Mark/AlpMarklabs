@@ -14,24 +14,23 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 # ── Computed field helpers ─────────────────────────────────────────────────────
 
 def _rec_title(rule_id: str, affected_area: str, meta: dict | None) -> str:
-    """Catchy one-line heading for the recommendation card."""
+    """Clear, plain-English heading for the recommendation card."""
     if rule_id == "OPT-BUDGET-001" and meta:
         meta_alloc = meta.get("meta_allocation", {})
         g_alloc    = meta.get("google_allocation", {})
         meta_eff   = meta_alloc.get("current_efficiency", 0)
         g_eff      = g_alloc.get("current_efficiency", 0)
-        change     = meta.get("daily_revenue_impact", 0)
         shift_to   = "Google" if g_eff > meta_eff else "Meta"
+        shift_from = "Meta" if shift_to == "Google" else "Google"
         shift_amt  = abs(
             meta_alloc.get("spend_change", 0) or g_alloc.get("spend_change", 0)
         )
         return (
-            f"Shift ₹{shift_amt:,.0f}/day to {shift_to}"
-            f" — +₹{change:,.0f}/day revenue"
+            f"{shift_from} Ads is reaching its limit"
+            f" \u2014 move \u20b9{shift_amt / 1000:.0f}K/day to {shift_to}"
         )
-    # Threshold-based: humanise rule_id  (e.g. RET-REPEAT-001 → "Repeat Purchase Rate")
+    # Humanise rule_id (e.g. RET-REPEAT-001 \u2192 "Repeat Purchase Rate")
     parts = rule_id.replace("-", " ").title().split()
-    # Drop trailing numeric IDs (001, 002 …)
     label = " ".join(p for p in parts if not p.isdigit())
     if affected_area and affected_area not in ("Meta Ads, Google Ads",):
         return affected_area
@@ -54,9 +53,10 @@ def _rec_short_description(
         saturating = "Meta" if meta_eff < g_eff else "Google"
         growing    = "Google" if saturating == "Meta" else "Meta"
         return (
-            f"{saturating} is saturating at current spend while {growing} has"
-            f" headroom. Reallocation lifts conversions {lift:.1f}%"
-            + (f" (+₹{estimated_impact:,.0f}/day)." if estimated_impact else ".")
+            f"Spending more on {saturating} is producing fewer results"
+            f" while {growing} still has capacity."
+            f" Shifting the budget is expected to improve conversions"
+            f" by {lift:.1f}%."
         )
     # Fall back to first sentence of signal_summary
     first = signal_summary.split(".")[0].strip()
@@ -77,49 +77,68 @@ def _rec_supporting_signals(
         meta_alloc = meta.get("meta_allocation", {})
         g_alloc    = meta.get("google_allocation", {})
         acc        = meta.get("model_accuracy", {})
+        meta_eff   = meta_alloc.get("current_efficiency", 0)
+        g_eff      = g_alloc.get("current_efficiency", 0)
+        meta_opt   = meta_alloc.get("optimal_efficiency", 0)
+        g_opt      = g_alloc.get("optimal_efficiency", 0)
+        shift_amt  = abs(
+            meta_alloc.get("spend_change", 0) or g_alloc.get("spend_change", 0)
+        )
+        direction  = (
+            "Meta \u2192 Google" if meta_alloc.get("spend_change", 0) < 0
+            else "Google \u2192 Meta"
+        )
+        meta_r2    = acc.get("meta_r2", 0)
+        g_r2       = acc.get("google_r2", 0)
+        conf_pct   = round(confidence_score * 100)
 
         signals.append({
-            "label": "Meta efficiency",
-            "value": f"{meta_alloc.get('current_efficiency', 0):.2f}× per ₹1k",
-            "context": (
-                "declining — nearing saturation"
-                if meta_alloc.get("current_efficiency", 1)
-                < meta_alloc.get("optimal_efficiency", 1)
-                else "at optimal level"
-            ),
-        })
-        signals.append({
-            "label": "Google efficiency",
-            "value": f"{g_alloc.get('current_efficiency', 0):.2f}× per ₹1k",
-            "context": (
-                "underutilised — room to grow"
-                if g_alloc.get("current_efficiency", 0)
-                < g_alloc.get("optimal_efficiency", 0)
-                else "at optimal level"
-            ),
-        })
-        signals.append({
-            "label": "Proposed reallocation",
+            "label": "What’s happening with Meta",
             "value": (
-                f"₹{abs(meta_alloc.get('spend_change', 0)):,.0f}/day"
-                f" Meta → Google"
-                if meta_alloc.get("spend_change", 0) < 0
-                else f"₹{abs(g_alloc.get('spend_change', 0)):,.0f}/day"
-                f" Google → Meta"
+                f"Every ₹1,000 spent on Meta is generating {meta_eff:.2f} conversions."
+                + (
+                    " Spending more is producing fewer additional results —"
+                    " the audience is getting saturated."
+                    if meta_eff < meta_opt
+                    else " Meta is performing well and has room for more spend."
+                )
             ),
             "context": None,
         })
         signals.append({
-            "label": "Model accuracy",
+            "label": "What’s happening with Google",
             "value": (
-                f"Meta R²={acc.get('meta_r2', 0):.0%},"
-                f" Google R²={acc.get('google_r2', 0):.0%}"
+                f"Every ₹1,000 spent on Google is generating {g_eff:.2f} conversions."
+                + (
+                    " There is room to grow here — adding more budget"
+                    " should improve results before hitting a ceiling."
+                    if g_eff < g_opt
+                    else " Google is already at its most efficient."
+                )
             ),
-            "context": "Hill curve fit on last 90 days of spend/conversion data",
+            "context": None,
         })
         signals.append({
-            "label": "Confidence",
-            "value": f"{confidence_score:.0%} ({confidence_level.replace('_', ' ').title()})",
+            "label": "What we’re suggesting",
+            "value": (
+                f"Move ₹{shift_amt / 1000:.0f}K/day ({direction})"
+                " without changing the total budget."
+                " The money is already being spent — it just performs better"
+                " on a different channel right now."
+            ),
+            "context": None,
+        })
+        signals.append({
+            "label": "How confident are we",
+            "value": (
+                f"{conf_pct}% confidence, based on real spend and conversion data"
+                f" from both channels."
+                + (
+                    " The data fits the model well."
+                    if min(meta_r2, g_r2) > 0.7
+                    else " More data would make this signal stronger."
+                )
+            ),
             "context": None,
         })
         return signals
@@ -133,7 +152,10 @@ def _rec_supporting_signals(
         signals.append({"label": label, "value": str(val), "context": None})
     signals.append({
         "label": "Confidence",
-        "value": f"{confidence_score:.0%} ({confidence_level.replace('_', ' ').title()})",
+        "value": (
+            f"{confidence_score:.0%}"
+            f" ({confidence_level.replace('_', ' ').title()})"
+        ),
         "context": None,
     })
     return signals
