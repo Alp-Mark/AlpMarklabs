@@ -75,7 +75,9 @@ _META_EPOCH   = date(2026, 1, 1)
 _GOOGLE_EPOCH = date(2026, 1, 10)
 
 # Pre-generated loyal customer pool (deterministic IDs, shared with simulator)
-_LOYAL_POOL = [f"loyal_{i:05d}" for i in range(1, int(ONE8_BRAND["loyal_pool_size"]) + 1)]
+_LOYAL_POOL = [
+    f"loyal_{i:05d}" for i in range(1, int(ONE8_BRAND["loyal_pool_size"]) + 1)
+]
 
 
 # ── Seasonality helpers ────────────────────────────────────────────────────────
@@ -307,7 +309,9 @@ def seed_realistic_data(days: int = 120) -> None:
     tables = [
         "shopify_order_line_items", "shopify_orders",
         "meta_ad_spends", "google_ad_spends",
-        "recommendations", "optimization_runs", "fitted_models",
+        "recommendations",
+        "fitted_models",        # must be before optimization_runs (FK)
+        "optimization_runs",
         "executive_kpi_snapshots", "acquisition_metrics_snapshots",
         "retention_daily_snapshots",
     ]
@@ -462,12 +466,16 @@ def seed_realistic_data(days: int = 120) -> None:
     print("  " + "-" * 74)
     print()
 
-    # ── Step 4: insert ────────────────────────────────────────────────────────
+    # ── Step 4: insert — separate committed transactions per table ────────────
+    # Using separate transactions (not one big engine.begin()) avoids proxy
+    # connection timeouts on long-running inserts over the public Railway proxy.
     print("💾 Inserting...")
 
-    with engine.begin() as conn:
-        if meta_batch:
-            print(f"   Meta ad spend:   {len(meta_batch):,} rows")
+    CHUNK = 2_000  # rows per committed batch
+
+    if meta_batch:
+        print(f"   Meta ad spend:   {len(meta_batch):,} rows")
+        with engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO meta_ad_spends (
                     id, tenant_id, connector_id, external_campaign_id,
@@ -482,8 +490,9 @@ def seed_realistic_data(days: int = 120) -> None:
                 ) ON CONFLICT DO NOTHING
             """), meta_batch)
 
-        if google_batch:
-            print(f"   Google ad spend: {len(google_batch):,} rows")
+    if google_batch:
+        print(f"   Google ad spend: {len(google_batch):,} rows")
+        with engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO google_ad_spends (
                     id, tenant_id, connector_id, external_campaign_id,
@@ -498,10 +507,12 @@ def seed_realistic_data(days: int = 120) -> None:
                 ) ON CONFLICT DO NOTHING
             """), google_batch)
 
-        if orders_batch:
-            print(f"   Orders:          {len(orders_batch):,} rows")
-            for i in range(0, len(orders_batch), 500):
-                chunk = orders_batch[i: i + 500]
+    if orders_batch:
+        print(f"   Orders:          {len(orders_batch):,} rows"
+              f" (in {CHUNK}-row batches)")
+        for i in range(0, len(orders_batch), CHUNK):
+            chunk = orders_batch[i: i + CHUNK]
+            with engine.begin() as conn:
                 conn.execute(text("""
                     INSERT INTO shopify_orders (
                         id, tenant_id, connector_id,
@@ -521,7 +532,10 @@ def seed_realistic_data(days: int = 120) -> None:
                         (tenant_id, connector_id, external_order_id)
                     DO NOTHING
                 """), chunk)
+            end = min(i + CHUNK, len(orders_batch))
+            print(f"     committed {end:,} / {len(orders_batch):,}")
 
+    with engine.begin() as conn:
         conn.execute(text(
             "UPDATE connector_integrations SET last_synced_at = :now WHERE id = :cid"
         ), {"cid": connector_id, "now": datetime.utcnow()})
