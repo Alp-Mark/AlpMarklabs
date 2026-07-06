@@ -276,7 +276,18 @@ def seed_realistic_data(days: int = 120) -> None:
         )
         sys.exit(1)
 
-    engine = create_engine(db_url)
+    engine = create_engine(
+        db_url,
+        pool_pre_ping=True,    # reconnect between batches if proxy dropped
+        pool_recycle=30,
+        connect_args={
+            "connect_timeout": 10,
+            "keepalives": 1,          # enable TCP keepalives
+            "keepalives_idle": 10,    # first keepalive after 10 s idle
+            "keepalives_interval": 5, # retry every 5 s
+            "keepalives_count": 5,    # give up after 5 failed probes
+        },
+    )
 
     print("=" * 70)
     print("🏏  One8 (Virat Kohli Brand) — data-first seed")
@@ -471,7 +482,7 @@ def seed_realistic_data(days: int = 120) -> None:
     # connection timeouts on long-running inserts over the public Railway proxy.
     print("💾 Inserting...")
 
-    CHUNK = 2_000  # rows per committed batch
+    CHUNK = 500  # rows per committed batch — keep INSERTs short (<3 s on proxy)
 
     if meta_batch:
         print(f"   Meta ad spend:   {len(meta_batch):,} rows")
@@ -512,26 +523,34 @@ def seed_realistic_data(days: int = 120) -> None:
               f" (in {CHUNK}-row batches)")
         for i in range(0, len(orders_batch), CHUNK):
             chunk = orders_batch[i: i + CHUNK]
-            with engine.begin() as conn:
-                conn.execute(text("""
-                    INSERT INTO shopify_orders (
-                        id, tenant_id, connector_id,
-                        external_order_id, customer_id,
-                        order_number, currency, total_amount,
-                        discount_amount,
-                        shipping_amount, refund_amount, is_refunded,
-                        order_created_at, synced_at
-                    ) VALUES (
-                        :id, :tenant_id, :connector_id,
-                        :external_order_id, :customer_id,
-                        :order_number, :currency, :total_amount,
-                        :discount_amount,
-                        :shipping_amount, :refund_amount, :is_refunded,
-                        :order_created_at, :synced_at
-                    ) ON CONFLICT
-                        (tenant_id, connector_id, external_order_id)
-                    DO NOTHING
-                """), chunk)
+            for attempt in range(3):
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text("""
+                            INSERT INTO shopify_orders (
+                                id, tenant_id, connector_id,
+                                external_order_id, customer_id,
+                                order_number, currency, total_amount,
+                                discount_amount,
+                                shipping_amount, refund_amount, is_refunded,
+                                order_created_at, synced_at
+                            ) VALUES (
+                                :id, :tenant_id, :connector_id,
+                                :external_order_id, :customer_id,
+                                :order_number, :currency, :total_amount,
+                                :discount_amount,
+                                :shipping_amount, :refund_amount, :is_refunded,
+                                :order_created_at, :synced_at
+                            ) ON CONFLICT
+                                (tenant_id, connector_id, external_order_id)
+                            DO NOTHING
+                        """), chunk)
+                    break  # success
+                except Exception as exc:
+                    if attempt == 2:
+                        raise
+                    print(f"     ⚠️  batch {i}–{i+CHUNK} attempt {attempt+1} failed"
+                          f" ({exc!s:.60}), retrying…")
             end = min(i + CHUNK, len(orders_batch))
             print(f"     committed {end:,} / {len(orders_batch):,}")
 
