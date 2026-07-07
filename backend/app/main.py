@@ -6897,7 +6897,7 @@ def get_recommendation_evidence(
 
     # Saturation % (used in narrative)
     meta_k   = params.get("meta",   {}).get("k", 1)
-    google_k = params.get("google", {}).get("k", 1)
+    _google_k = params.get("google", {}).get("k", 1)  # noqa: F841
 
     # ── Two focused channel charts ────────────────────────────────────────────
     # Chart 1: Meta — x range 0 to 1.5× current spend (shows full curve context)
