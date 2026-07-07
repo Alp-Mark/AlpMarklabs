@@ -26,8 +26,7 @@ def _rec_title(rule_id: str, affected_area: str, meta: dict | None) -> str:
             meta_alloc.get("spend_change", 0) or g_alloc.get("spend_change", 0)
         )
         return (
-            f"{shift_from} Ads is reaching its limit"
-            f" \u2014 move \u20b9{shift_amt / 1000:.0f}K/day to {shift_to}"
+            f"Shift ₹{shift_amt / 1000:.0f}K/day from {shift_from} to {shift_to}"
         )
     # Humanise rule_id (e.g. RET-REPEAT-001 \u2192 "Repeat Purchase Rate")
     parts = rule_id.replace("-", " ").title().split()
@@ -49,14 +48,11 @@ def _rec_short_description(
         g_alloc    = meta.get("google_allocation", {})
         meta_eff   = meta_alloc.get("current_efficiency", 0)
         g_eff      = g_alloc.get("current_efficiency", 0)
-        lift       = meta.get("lift_pct", 0)
         saturating = "Meta" if meta_eff < g_eff else "Google"
         growing    = "Google" if saturating == "Meta" else "Meta"
         return (
-            f"Spending more on {saturating} is producing fewer results"
-            f" while {growing} still has capacity."
-            f" Shifting the budget is expected to improve conversions"
-            f" by {lift:.1f}%."
+            f"{saturating} audiences are saturating"
+            f" — {growing} can convert that budget better right now."
         )
     # Fall back to first sentence of signal_summary
     first = signal_summary.split(".")[0].strip()
