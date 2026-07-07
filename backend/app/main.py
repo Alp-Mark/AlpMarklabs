@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from backend.app import (
@@ -6709,6 +6709,229 @@ def list_simulations_for_recommendation(
         simulations=[SimulationResponse.model_validate(s) for s in simulations],
         total_count=len(simulations),
     )
+
+
+@app.get(
+    "/tenants/{tenant_id}/recommendations/{recommendation_id}/evidence",
+)
+def get_recommendation_evidence(
+    tenant_id: uuid.UUID,
+    recommendation_id: uuid.UUID,
+    _auth: IntelRecommendationsViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> dict[str, Any]:
+    """
+    Rich evidence payload for the recommendation detail page.
+
+    Returns weekly spend/efficiency history, trend narrative, current-vs-optimal
+    table, and plain-English explanations.  Designed to fill the 'Learn More'
+    detail view.
+    """
+    rec = db.scalar(
+        select(Recommendation).where(
+            Recommendation.id == recommendation_id,
+            Recommendation.tenant_id == tenant_id,
+        )
+    )
+    if rec is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recommendation not found.",
+        )
+
+    meta = rec.optimization_metadata or {}
+    lookback_days: int = meta.get("lookback_days", 90)
+    period_end   = rec.snapshot_date
+    period_start = period_end - timedelta(days=lookback_days)
+
+    # ── Weekly spend per channel ─────────────────────────────────────────────
+    meta_weekly_rows = db.execute(
+        text("""
+            SELECT date_trunc('week', spend_date)::date AS week_start,
+                   SUM(spend_amount)                    AS spend
+            FROM meta_ad_spends
+            WHERE tenant_id  = :tid
+              AND spend_date >= :start
+              AND spend_date <= :end
+            GROUP BY 1
+            ORDER BY 1
+        """),
+        {"tid": str(tenant_id), "start": period_start, "end": period_end},
+    ).fetchall()
+
+    google_weekly_rows = db.execute(
+        text("""
+            SELECT date_trunc('week', spend_date)::date AS week_start,
+                   SUM(spend_amount)                    AS spend
+            FROM google_ad_spends
+            WHERE tenant_id  = :tid
+              AND spend_date >= :start
+              AND spend_date <= :end
+            GROUP BY 1
+            ORDER BY 1
+        """),
+        {"tid": str(tenant_id), "start": period_start, "end": period_end},
+    ).fetchall()
+
+    # ── Weekly orders ─────────────────────────────────────────────────────────
+    order_weekly_rows = db.execute(
+        text("""
+            SELECT date_trunc('week', order_created_at)::date AS week_start,
+                   COUNT(*) FILTER (WHERE is_refunded = false) AS orders
+            FROM shopify_orders
+            WHERE tenant_id         = :tid
+              AND order_created_at >= :start
+              AND order_created_at <= :end
+            GROUP BY 1
+            ORDER BY 1
+        """),
+        {
+            "tid":   str(tenant_id),
+            "start": period_start,
+            "end":   period_end,
+        },
+    ).fetchall()
+
+    # Build lookup dicts keyed by week_start
+    meta_by_week   = {str(r[0]): float(r[1])  for r in meta_weekly_rows}
+    google_by_week = {str(r[0]): float(r[1])  for r in google_weekly_rows}
+    orders_by_week = {str(r[0]): int(r[1])    for r in order_weekly_rows}
+
+    all_weeks = sorted(
+        set(meta_by_week) | set(google_by_week) | set(orders_by_week)
+    )
+
+    # ── Compute weekly efficiency (conversions per ₹1k, proportional attribution)
+    # Assumption: ~350 organic orders/week (50/day baseline) are not attributed
+    # to paid channels.  The remainder splits proportionally by spend.
+    ORGANIC_PER_WEEK = 350
+
+    weekly_chart = []
+    for week in all_weeks:
+        ms  = meta_by_week.get(week, 0)
+        gs  = google_by_week.get(week, 0)
+        tot = orders_by_week.get(week, 0)
+
+        paid_orders = max(0, tot - ORGANIC_PER_WEEK)
+        total_spend = ms + gs
+
+        if total_spend > 0 and paid_orders > 0:
+            meta_conv   = paid_orders * ms / total_spend
+            google_conv = paid_orders * gs / total_spend
+        else:
+            meta_conv = google_conv = 0.0
+
+        meta_eff   = round(meta_conv   / (ms / 1000), 3) if ms   > 0 else 0.0
+        google_eff = round(google_conv / (gs / 1000), 3) if gs   > 0 else 0.0
+
+        try:
+            label = str(week)[5:]   # "2026-04-07" → "04-07"
+        except Exception:
+            label = str(week)
+
+        weekly_chart.append({
+            "week":              label,
+            "week_start":        str(week),
+            "meta_spend":        round(ms),
+            "google_spend":      round(gs),
+            "total_orders":      tot,
+            "meta_efficiency":   meta_eff,
+            "google_efficiency": google_eff,
+        })
+
+    # ── Trend: first-third vs last-third of the period ───────────────────────
+    def _avg(series: list[float]) -> float:
+        return sum(series) / len(series) if series else 0.0
+
+    n = len(weekly_chart)
+    third = max(1, n // 3)
+    early_meta   = _avg([w["meta_efficiency"]   for w in weekly_chart[:third]])
+    late_meta    = _avg([w["meta_efficiency"]    for w in weekly_chart[-third:]])
+    early_google = _avg([w["google_efficiency"]  for w in weekly_chart[:third]])
+    late_google  = _avg([w["google_efficiency"]  for w in weekly_chart[-third:]])
+
+    meta_change_pct   = round((late_meta   - early_meta)   / early_meta   * 100, 1) if early_meta   else 0.0
+    google_change_pct = round((late_google - early_google) / early_google * 100, 1) if early_google else 0.0
+
+    # ── Narrative and explanations ────────────────────────────────────────────
+    meta_direction   = "declined" if meta_change_pct   < -2 else ("improved" if meta_change_pct   > 2 else "stayed flat")
+    google_direction = "declined" if google_change_pct < -2 else ("improved" if google_change_pct > 2 else "stayed flat")
+
+    if meta_change_pct < -2:
+        narrative = (
+            f"Meta\u2019s conversion rate per \u20b91,000 has {meta_direction}"
+            f" {abs(meta_change_pct):.0f}% over the past {lookback_days} days"
+            f" while Google has {google_direction}."
+            f" At current spend levels, every extra rupee on Meta is generating"
+            f" fewer results than the same rupee on Google."
+        )
+    else:
+        narrative = (
+            f"Over the past {lookback_days} days, Meta efficiency has"
+            f" {meta_direction} and Google has {google_direction}."
+            f" The model recommends rebalancing to improve overall conversion efficiency."
+        )
+
+    meta_alloc   = meta.get("meta_allocation",   {})
+    google_alloc = meta.get("google_allocation", {})
+    acc          = meta.get("model_accuracy",    {})
+    meta_r2      = acc.get("meta_r2",    0)
+    google_r2    = acc.get("google_r2",  0)
+    conf_pct     = round((rec.confidence_score or 0) * 100)
+    explained    = round((meta_r2 + google_r2) / 2 * 100)
+
+    if meta_change_pct < -5:
+        do_nothing = (
+            f"If the current trend continues, Meta efficiency could decline"
+            f" another {abs(meta_change_pct) * 0.7:.0f}\u2013{abs(meta_change_pct) * 1.2:.0f}%"
+            f" over the next 30 days as the audience continues to saturate."
+        )
+    else:
+        do_nothing = (
+            "The opportunity cost of not acting grows each day as the"
+            " spend imbalance between channels continues."
+        )
+
+    data_basis = (
+        f"Based on {lookback_days} days of real spend and conversion data"
+        f" from both channels. The model explains {explained}% of the"
+        f" conversion pattern \u2014 the remaining {100 - explained}% is"
+        f" noise (seasonality, day-of-week variation, campaign cycles)."
+    )
+
+    return {
+        "recommendation_id":       str(recommendation_id),
+        "lookback_days":           lookback_days,
+        "narrative":               narrative,
+        "weekly_chart":            weekly_chart,
+        "current_vs_optimal": {
+            "meta": {
+                "current_spend":      round(meta_alloc.get("current_spend",  0)),
+                "optimal_spend":      round(meta_alloc.get("optimal_spend",  0)),
+                "current_efficiency": round(meta_alloc.get("current_efficiency", 0), 3),
+                "optimal_efficiency": round(meta_alloc.get("optimal_efficiency", 0), 3),
+                "spend_change":       round(meta_alloc.get("spend_change",   0)),
+            },
+            "google": {
+                "current_spend":      round(google_alloc.get("current_spend",  0)),
+                "optimal_spend":      round(google_alloc.get("optimal_spend",  0)),
+                "current_efficiency": round(google_alloc.get("current_efficiency", 0), 3),
+                "optimal_efficiency": round(google_alloc.get("optimal_efficiency", 0), 3),
+                "spend_change":       round(google_alloc.get("spend_change",   0)),
+            },
+        },
+        "trend": {
+            "meta_efficiency_early":    round(early_meta,   3),
+            "meta_efficiency_recent":   round(late_meta,    3),
+            "meta_change_pct":          meta_change_pct,
+            "google_efficiency_early":  round(early_google, 3),
+            "google_efficiency_recent": round(late_google,  3),
+            "google_change_pct":        google_change_pct,
+        },
+        "what_happens_if_we_do_nothing": do_nothing,
+        "data_basis":                    data_basis,
+        "confidence_pct":                conf_pct,
+    }
 
 
 @app.patch(
