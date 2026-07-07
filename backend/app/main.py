@@ -6852,10 +6852,10 @@ def get_recommendation_evidence(
                 "current_eff":      cur_me,
                 "early_eff":        round(early_eff, 3),
                 "change_pct":       eff_change_pct,
-                "status":           "declining" if eff_change_pct < -3 else "stable",
+                "status":           "declining" if eff_change_pct < -2 else "stable",
                 "plain_text":       (
                     f"Meta used to generate {early_eff:.2f} conversions per \u20b91,000."
-                    f" Now it generates {cur_me:.2f}. That\u2019s a {abs(eff_change_pct):.0f}%"
+                    f" Now it generates {cur_me:.2f}. That\u2019s a {abs(eff_change_pct):.1f}%"
                     f" {'drop' if eff_change_pct < 0 else 'change'}."
                 ),
             },
@@ -6868,7 +6868,7 @@ def get_recommendation_evidence(
             "weekly_trend": weekly_eff,   # sparkline data: week + efficiency + status
             "summary": (
                 f"Meta\u2019s per-rupee result has {'dropped' if eff_change_pct < 0 else 'shifted'}"
-                f" {abs(eff_change_pct):.0f}% over {lookback} days."
+                f" {abs(eff_change_pct):.1f}% over {lookback} days."
                 f" Google has stayed flat. The gap means Meta is overallocated."
             ),
         },
