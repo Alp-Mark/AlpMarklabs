@@ -6810,24 +6810,6 @@ def get_recommendation_evidence(
             return 0.0
         return hill(spend, p) / (spend / 1000.0)
 
-    # ── Generate saturation curve points ─────────────────────────────────────
-    # X-axis: spend from ₹20K to ₹600K in 30 steps
-    spend_points = [20_000 + i * 19_333 for i in range(31)]
-
-    meta_curve   = []
-    google_curve = []
-    for sp in spend_points:
-        meta_curve.append({
-            "spend":      sp,
-            "spend_l":    f"\u20b9{sp/100_000:.1f}L",
-            "efficiency": round(efficiency(sp, params.get("meta",   {})), 3),
-        })
-        google_curve.append({
-            "spend":      sp,
-            "spend_l":    f"\u20b9{sp/100_000:.1f}L",
-            "efficiency": round(efficiency(sp, params.get("google", {})), 3),
-        })
-
     # ── Load actual daily spend/conversion data (scatter for the chart) ───────
     daily_rows = db.execute(
         text("""
@@ -6899,130 +6881,175 @@ def get_recommendation_evidence(
     cur_google_eff = round(efficiency(cur_google_s, params.get("google", {})), 3)
     opt_google_eff = round(efficiency(opt_google_s, params.get("google", {})), 3)
 
-    # Saturation %: how close we are to half-maximum (k is the half-max spend)
+    # ── Sweet spot: spend that maximises efficiency (d(conv/spend)/dspend = 0)
+    # For Hill: s_sweet = k × (n−1)^(1/n)  when n > 1, else 0 (no peak)
+    def sweet_spot(p: dict) -> float:
+        k = p.get("k", 1.0)
+        n = p.get("n", 1.0)
+        if n <= 1 or k <= 0:
+            return 0.0
+        return k * ((n - 1) ** (1.0 / n))
+
+    meta_sweet   = sweet_spot(params.get("meta",   {}))
+    google_sweet = sweet_spot(params.get("google", {}))
+    meta_sweet_eff   = round(efficiency(meta_sweet,   params.get("meta",   {})), 3) if meta_sweet > 0 else 0.0
+    google_sweet_eff = round(efficiency(google_sweet, params.get("google", {})), 3) if google_sweet > 0 else 0.0
+
+    # Saturation % (used in narrative)
     meta_k   = params.get("meta",   {}).get("k", 1)
     google_k = params.get("google", {}).get("k", 1)
-    meta_sat_pct   = round(cur_meta_s   / meta_k   * 100, 1) if meta_k   else 0
-    google_sat_pct = round(cur_google_s / google_k * 100, 1) if google_k else 0
 
-    # ── Loss projection ───────────────────────────────────────────────────────
-    # At current Meta spend, how many conversions are we losing vs optimal?
-    daily_loss_convs = round(
-        hill(opt_meta_s,   params.get("meta",   {}))
-        + hill(opt_google_s, params.get("google", {}))
-        - hill(cur_meta_s,   params.get("meta",   {}))
-        - hill(cur_google_s, params.get("google", {})),
-        1,
-    )
+    # ── Two focused channel charts ────────────────────────────────────────────
+    # Chart 1: Meta — x range 0 to 1.5× current spend (shows full curve context)
+    meta_max_x  = max(cur_meta_s * 1.4, opt_meta_s * 1.2, 200_000)
+    meta_pts    = [meta_max_x * i / 29 for i in range(30)]
+    meta_chart  = [{
+        "spend": round(sp),
+        "spend_label": f"\u20b9{sp/100_000:.1f}L",
+        "efficiency": round(efficiency(sp, params.get("meta", {})), 3),
+    } for sp in meta_pts]
+
+    # Chart 2: Google — x range 0 to 1.5× proposed spend
+    google_max_x = max(opt_google_s * 1.4, cur_google_s * 1.2, 100_000)
+    google_pts   = [google_max_x * i / 29 for i in range(30)]
+    google_chart = [{
+        "spend": round(sp),
+        "spend_label": f"\u20b9{sp/100_000:.1f}L",
+        "efficiency": round(efficiency(sp, params.get("google", {})), 3),
+    } for sp in google_pts]
+
+    # ── Before / after conversion totals ─────────────────────────────────────
+    cur_meta_convs   = round(hill(cur_meta_s,   params.get("meta",   {})), 1)
+    cur_google_convs = round(hill(cur_google_s, params.get("google", {})), 1)
+    opt_meta_convs   = round(hill(opt_meta_s,   params.get("meta",   {})), 1)
+    opt_google_convs = round(hill(opt_google_s, params.get("google", {})), 1)
+    before_total = round(cur_meta_convs + cur_google_convs, 1)
+    after_total  = round(opt_meta_convs + opt_google_convs, 1)
+    gain         = round(after_total - before_total, 1)
+
     aov = meta_opt_data.get("aov", 6500)
-    daily_loss_rev = round(daily_loss_convs * float(aov))
+    daily_loss_rev = round(gain * float(aov))
 
-    # Days until efficiency drop becomes material (>5% below current)
-    meta_k   = params.get("meta",   {}).get("k", 1)
-    google_k = params.get("google", {}).get("k", 1)
+    # ── Timeline projection ───────────────────────────────────────────────────
     if cur_meta_s > 0 and meta_k > 0:
-        saturation_ratio = cur_meta_s / meta_k
+        saturation_ratio  = cur_meta_s / meta_k
         weeks_to_material = max(1, round(4 / max(0.1, saturation_ratio - 0.5))) if saturation_ratio > 0.5 else 8
     else:
         weeks_to_material = 4
 
+    shift_amt = round(abs(meta_alloc.get("spend_change", 0)))
+
     # ── Narrative ─────────────────────────────────────────────────────────────
+    meta_past = cur_meta_s > meta_sweet * 1.1 if meta_sweet > 0 else False
     narrative = (
-        f"The model was trained on {lookback_days} days of real spend and"
-        f" conversion data. At \u20b9{cur_meta_s/100_000:.1f}L/day,"
-        f" Meta is at {meta_sat_pct}% of its saturation point \u2014"
-        f" meaning you\u2019re spending past the curve\u2019s sweet spot."
-        f" Google is at {google_sat_pct}% of its saturation point and"
-        f" still has room to grow."
+        f"At \u20b9{cur_meta_s/100_000:.1f}L/day, Meta is"
+        + (
+            f" past its efficiency sweet spot (\u20b9{meta_sweet/100_000:.1f}L)."
+            f" Every extra rupee there generates diminishing returns."
+            if meta_past else
+            " approaching its efficiency limit."
+        )
+        + f" Shifting \u20b9{shift_amt/1000:.0f}K to Google adds"
+        f" {gain:.0f} more conversions/day for the same total spend."
     )
 
-    # ── Next Best Action ──────────────────────────────────────────────────────
-    shift_amt = round(abs(meta_alloc.get("spend_change", 0)))
     nba = {
         "action":       f"Move \u20b9{shift_amt/1000:.0f}K/day from Meta to Google",
         "how":          "Reduce your Meta daily budget cap and increase Google"
                         " Shopping/Search budget by the same amount.",
         "when":         "This week \u2014 the sooner you act, the sooner"
                         " conversions improve.",
-        "review_after": "Check conversion performance after 14 days."
-                        " If Google efficiency drops below"
+        "review_after": f"Check conversion performance after 14 days."
+                        f" If Google efficiency drops below"
                         f" {opt_google_eff:.2f}\u00d7, pause and reassess.",
         "risk":         "Low. Total budget stays the same."
                         " You\u2019re not spending more, just rebalancing.",
     }
 
-    # ── What happens if we don't act ─────────────────────────────────────────
     do_nothing = {
-        "daily_opportunity_cost": daily_loss_rev,
+        "daily_opportunity_cost":  daily_loss_rev,
         "weekly_opportunity_cost": daily_loss_rev * 7,
         "explanation": (
-            f"Every day at current spend allocation, you\u2019re leaving"
-            f" approximately \u20b9{daily_loss_rev:,} in reachable revenue on the table."
-            f" Meta is past its efficient zone. The gap between what you\u2019re"
-            f" getting and what you could get grows each week."
+            f"Every day at current allocation, you\u2019re missing"
+            f" ~{gain:.0f} conversions that are achievable with the same spend."
+            f" That\u2019s approximately \u20b9{daily_loss_rev:,}/day in reachable revenue."
         ),
         "weeks_to_material_impact": weeks_to_material,
         "timeline_note": (
-            f"If Meta spend continues at current levels, you\u2019ll see"
-            f" noticeable conversion rate pressure within"
-            f" {weeks_to_material} week{'s' if weeks_to_material != 1 else ''}."
+            f"At current Meta spend levels, conversion rate pressure will"
+            f" become noticeable within {weeks_to_material}"
+            f" week{'s' if weeks_to_material != 1 else ''}."
         ),
     }
 
-    conf_pct = round((rec.confidence_score or 0) * 100)
-    meta_r2  = round(accuracy.get("meta",   0) * 100)
+    conf_pct  = round((rec.confidence_score or 0) * 100)
+    meta_r2   = round(accuracy.get("meta",   0) * 100)
     google_r2 = round(accuracy.get("google", 0) * 100)
 
     data_basis = (
-        f"Meta model fit: {meta_r2}% of the conversion pattern explained"
-        f" (R\u00b2={meta_r2/100:.2f}). Google model fit: {google_r2}%."
-        f" Based on {lookback_days} days of actual spend and conversion data."
+        f"Meta model: {meta_r2}% of conversion variation explained."
+        f" Google model: {google_r2}%."
+        f" Fitted on {lookback_days} days of actual daily spend and conversion data."
         f" Overall recommendation confidence: {conf_pct}%."
     )
 
     return {
-        "recommendation_id":   str(recommendation_id),
-        "lookback_days":       lookback_days,
-        "narrative":           narrative,
-        "saturation_curves": {
-            "meta":            meta_curve,
-            "google":          google_curve,
-            "meta_current_spend":   round(cur_meta_s),
-            "meta_optimal_spend":   round(opt_meta_s),
-            "google_current_spend": round(cur_google_s),
-            "google_optimal_spend": round(opt_google_s),
-            "meta_current_efficiency":   cur_meta_eff,
-            "meta_optimal_efficiency":   opt_meta_eff,
-            "google_current_efficiency": cur_google_eff,
-            "google_optimal_efficiency": opt_google_eff,
-        },
-        "scatter_data": {
-            "meta":   meta_scatter[-60:],    # last 60 days
-            "google": google_scatter[-60:],
-        },
-        "saturation_levels": {
-            "meta_pct":   meta_sat_pct,
-            "google_pct": google_sat_pct,
-            "meta_label": (
-                "Past sweet spot \u2014 efficiency declining"
-                if meta_sat_pct > 70 else
-                "Approaching limit" if meta_sat_pct > 50 else
-                "Room to grow"
+        "recommendation_id": str(recommendation_id),
+        "lookback_days":     lookback_days,
+        "narrative":         narrative,
+
+        # Two separate, focused channel charts
+        "meta_chart": {
+            "title":        "Meta — where each ₹1,000 goes",
+            "description":  (
+                "The orange line shows how many conversions you get per"
+                " ₹1,000 spent at different daily spend levels."
+                " Past the sweet spot, adding budget produces fewer results."
             ),
-            "google_label": (
-                "Past sweet spot" if google_sat_pct > 70 else
-                "Approaching limit" if google_sat_pct > 50 else
-                "Room to grow"
+            "curve":        meta_chart,
+            "scatter":      meta_scatter[-60:],
+            "markers": {
+                "sweet_spot":  {"spend": round(meta_sweet),  "efficiency": meta_sweet_eff,  "label": "Sweet spot — peak efficiency"},
+                "current":     {"spend": round(cur_meta_s),  "efficiency": cur_meta_eff,    "label": f"Current (\u20b9{cur_meta_s/100_000:.1f}L/day)"},
+                "proposed":    {"spend": round(opt_meta_s),  "efficiency": opt_meta_eff,    "label": f"Proposed (\u20b9{opt_meta_s/100_000:.1f}L/day)"},
+            },
+        },
+        "google_chart": {
+            "title":        "Google — where each ₹1,000 goes",
+            "description":  (
+                "Google still generates more total conversions when you"
+                " add budget, even as per-rupee efficiency gradually declines."
+            ),
+            "curve":        google_chart,
+            "scatter":      google_scatter[-60:],
+            "markers": {
+                "sweet_spot":  {"spend": round(google_sweet),  "efficiency": google_sweet_eff,  "label": "Sweet spot — peak efficiency"},
+                "current":     {"spend": round(cur_google_s),  "efficiency": cur_google_eff,    "label": f"Current (\u20b9{cur_google_s/100_000:.1f}L/day)"},
+                "proposed":    {"spend": round(opt_google_s),  "efficiency": opt_google_eff,    "label": f"Proposed (\u20b9{opt_google_s/100_000:.1f}L/day)"},
+            },
+        },
+
+        # Plain-English before/after proof
+        "before_after": {
+            "current_meta_conversions":   cur_meta_convs,
+            "current_google_conversions": cur_google_convs,
+            "current_total":              before_total,
+            "proposed_meta_conversions":  opt_meta_convs,
+            "proposed_google_conversions":opt_google_convs,
+            "proposed_total":             after_total,
+            "daily_gain_conversions":     gain,
+            "daily_gain_revenue":         daily_loss_rev,
+            "summary": (
+                f"Same total spend. {gain:.0f} more conversions/day."
+                f" Approximately \u20b9{daily_loss_rev:,} more daily revenue."
             ),
         },
-        "nba":             nba,
-        "do_nothing":      do_nothing,
-        "data_basis":      data_basis,
-        "confidence_pct":  conf_pct,
-        "model_accuracy": {
-            "meta_r2":    meta_r2,
-            "google_r2":  google_r2,
-        },
+
+        "nba":              nba,
+        "do_nothing":       do_nothing,
+        "data_basis":       data_basis,
+        "confidence_pct":   conf_pct,
+        "model_accuracy": {"meta_r2": meta_r2, "google_r2": google_r2},
     }
 
 
