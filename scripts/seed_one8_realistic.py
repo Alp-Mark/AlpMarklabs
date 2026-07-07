@@ -294,10 +294,6 @@ def seed_realistic_data(days: int = 120) -> None:
     print("=" * 70)
     print(f"Tenant : {ONE8_TENANT_ID}")
     print(f"Days   : {days}")
-    print(
-        f"Range  : "
-        f"{datetime.now().date() - timedelta(days=days - 1)} → {datetime.now().date()}"
-    )
     print()
 
     # ── Step 1: connector ─────────────────────────────────────────────────────
@@ -343,8 +339,16 @@ def seed_realistic_data(days: int = 120) -> None:
     print(f"   ✅ {total_deleted:,} rows removed\n")
 
     # ── Step 3: generate ──────────────────────────────────────────────────────
-    end_dt       = datetime.now()
+    # Generate through yesterday only — today is the daily simulator's job.
+    # end_dt is "yesterday 23:59" so the seed never partially-covers today.
+    end_dt       = datetime.now() - timedelta(days=1)
+    end_dt       = end_dt.replace(hour=23, minute=59, second=59)
     growth_start = (end_dt - timedelta(days=days - 1)).date()
+    print(
+        f"Range  : "
+        f"{end_dt.date() - timedelta(days=days - 1)} \u2192 {end_dt.date()} (yesterday)"
+    )
+    print()
 
     meta_batch:   list[dict] = []
     google_batch: list[dict] = []
