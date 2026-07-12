@@ -10,12 +10,14 @@ without needing actual platform connections.
 ℹ️  NOTE: Generates simulated data for One8 test tenant for demo/testing purposes.
 """
 
+import json
 import logging
 import math
 import random
 import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from backend.app.db.session import SessionLocal
@@ -26,6 +28,45 @@ logger = logging.getLogger(__name__)
 
 # One8 tenant configuration (test/demo tenant)
 ONE8_TENANT_ID = "23165fa5-150b-4b6c-a637-b3dd24532c4d"
+
+# ── Load product catalog (same as seed script) ─────────────────────────────────
+_CATALOG: list[tuple[str, str, str, int, int, int]] | None = None
+
+def _load_product_catalog() -> list[tuple[str, str, str, int, int, int]]:
+    """Load One8 product catalog: (sku, title, variant, price, cost, stock)"""
+    global _CATALOG
+    if _CATALOG is not None:
+        return _CATALOG
+    
+    products_file = Path(__file__).parent.parent.parent / "data" / "one8_products.json"
+    with open(products_file) as f:
+        catalog_data = json.load(f)
+    
+    COGS_PCT: dict[str, float] = {
+        "T-Shirt": 28.0, "Polo": 30.0, "Tank Top": 28.0, "Shorts": 30.0,
+        "Leggings": 30.0, "Sweatshirt": 32.0, "Pants": 32.0, "Jacket": 34.0,
+        "Caps": 26.0, "Sneakers": 36.0, "Cricket Shoes": 36.0,
+    }
+    DEFAULT_COGS_PCT = 32.0
+    
+    catalog = []
+    for prod in catalog_data["products"]:
+        ptype = prod.get("product_type", "")
+        cogs_pct = COGS_PCT.get(ptype, DEFAULT_COGS_PCT)
+        title = prod["title"]
+        for v in prod["variants"]:
+            price = int(v["price"]) if v.get("price") else 0
+            if price == 0:
+                continue
+            cost = max(1, int(price * cogs_pct / 100))
+            sku = v.get("sku") or f"ONE8-{v['variant_id']}"
+            variant_title = v.get("title", "")
+            stock = max(0, v.get("inventory_quantity") or 0)
+            catalog.append((sku, title, variant_title, price, cost, stock))
+    
+    _CATALOG = catalog
+    logger.info(f"Loaded {len(catalog)} product variants")
+    return catalog
 
 # ── One8 brand business parameters (must match scripts/seed_one8_realistic.py) ────
 # Observable business KPIs only — no Hill curve parameters.
@@ -45,6 +86,34 @@ ONE8_BRAND = {
     "refund_max_days": 10,
     "loyal_pool_size":    2_000,
     "repeat_order_share": 0.25,
+}
+
+# Multi-channel configuration (influencer, email, TV, affiliate)
+MULTI_CHANNELS = {
+    "influencer": {
+        "base_spend": 25_000,
+        "base_cac": 1_100,
+        "cac_at_2x_pct": 50,
+        "campaigns": ["Nano Influencers", "Micro Influencers", "Macro Influencers"],
+    },
+    "email": {
+        "base_spend": 15_000,
+        "base_cac": 380,
+        "cac_at_2x_pct": 20,
+        "campaigns": ["Win-Back", "Abandoned Cart", "Product Launch"],
+    },
+    "tv_streaming": {
+        "base_spend": 50_000,
+        "base_cac": 1_500,
+        "cac_at_2x_pct": 65,
+        "campaigns": ["IPL Sponsorship", "World Cup Ads", "Brand Films"],
+    },
+    "affiliate": {
+        "base_spend": 20_000,
+        "base_cac": 750,
+        "cac_at_2x_pct": 35,
+        "campaigns": ["Cashback Networks", "Coupon Sites", "Rewards Programs"],
+    },
 }
 
 # Campaign cycle epochs — same as seed script so daily data continues the pattern
@@ -486,6 +555,187 @@ def generate_daily_ad_spend(
     }
 
 
+def generate_daily_multi_channel_spend(
+    db: Session, connector_id: str, target_date: date
+) -> dict[str, Any]:
+    """
+    Generate multi-channel spend (influencer, email, TV, affiliate).
+    Uses same CAC-driven model as seed script.
+    """
+    multi_channel_batch = []
+    total_by_channel = {}
+
+    for channel_name, config in MULTI_CHANNELS.items():
+        # Simple multiplier for day-to-day variance
+        daily_mult = random.uniform(0.85, 1.15)
+        
+        # Calculate daily spend
+        daily_spend = max(0, int(config["base_spend"] * daily_mult))
+        
+        # Calculate conversions from spend using CAC model
+        spend_ratio = daily_spend / config["base_spend"]
+        cac_at_2x = 1.0 + config["cac_at_2x_pct"] / 100.0
+        exponent = math.log(cac_at_2x) / math.log(2)
+        effective_cac = config["base_cac"] * (spend_ratio ** exponent)
+        conversions = max(0, int(daily_spend / effective_cac)) if effective_cac > 0 else 0
+        
+        # Revenue estimation (assume similar AOV to organic)
+        avg_revenue_per_conv = ONE8_BRAND["base_aov"]
+        estimated_revenue = conversions * avg_revenue_per_conv * random.uniform(0.9, 1.1)
+        
+        # Split across campaigns
+        for campaign_name in config["campaigns"]:
+            campaign_spend = daily_spend / len(config["campaigns"])
+            campaign_conversions = conversions // len(config["campaigns"])
+            campaign_revenue = estimated_revenue / len(config["campaigns"])
+            
+            multi_channel_batch.append({
+                "id": str(uuid.uuid4()),
+                "tenant_id": ONE8_TENANT_ID,
+                "connector_id": connector_id,
+                "channel_name": channel_name,
+                "external_campaign_id": f"{channel_name}_{campaign_name.replace(' ', '_')}_{target_date.strftime('%Y%m%d')}",
+                "campaign_name": campaign_name,
+                "spend_date": target_date,
+                "currency": "INR",
+                "spend_amount": float(campaign_spend),
+                "conversions": campaign_conversions,
+                "revenue": float(campaign_revenue),
+                "impressions": None,
+                "clicks": None,
+                "synced_at": datetime.utcnow(),
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            })
+        
+        total_by_channel[channel_name] = daily_spend
+
+    # Insert multi-channel spend
+    if multi_channel_batch:
+        db.execute(
+            text("""
+                INSERT INTO marketing_channel_spends (
+                    id, tenant_id, connector_id, channel_name,
+                    external_campaign_id, campaign_name,
+                    spend_date, currency, spend_amount,
+                    conversions, revenue, impressions, clicks,
+                    synced_at, created_at, updated_at
+                ) VALUES (
+                    :id, :tenant_id, :connector_id, :channel_name,
+                    :external_campaign_id, :campaign_name,
+                    :spend_date, :currency, :spend_amount,
+                    :conversions, :revenue, :impressions, :clicks,
+                    :synced_at, :created_at, :updated_at
+                )
+            """),
+            multi_channel_batch,
+        )
+        db.commit()
+
+    return {
+        "records_created": len(multi_channel_batch),
+        "by_channel": total_by_channel,
+        "total_spend": sum(total_by_channel.values()),
+    }
+
+
+def generate_daily_line_items(
+    db: Session, target_date: date
+) -> dict[str, Any]:
+    """
+    Generate line items for orders created on target_date.
+    Uses product catalog to create realistic line items matching order totals.
+    """
+    catalog = _load_product_catalog()
+    
+    # Group products by price tier for realistic order composition
+    tier_low = [c for c in catalog if c[3] <= 2_500]
+    tier_mid = [c for c in catalog if 2_501 <= c[3] <= 5_500]
+    tier_high = [c for c in catalog if c[3] > 5_500]
+    accessories = [c for c in catalog if c[3] <= 2_000]
+    
+    # Get orders for target date
+    orders = db.execute(
+        text("""
+            SELECT id, total_amount, order_created_at
+            FROM shopify_orders
+            WHERE tenant_id = :tid
+              AND order_created_at::date = :target_date
+            ORDER BY order_created_at
+        """),
+        {"tid": ONE8_TENANT_ID, "target_date": target_date},
+    ).fetchall()
+    
+    if not orders:
+        return {"line_items_created": 0, "orders_processed": 0}
+    
+    line_items_batch = []
+    
+    for order in orders:
+        order_id, order_total, order_created_at = order[0], order[1], order[2]
+        
+        # Select products based on order total
+        if order_total <= 2_800:
+            pool = tier_low or tier_mid
+        elif order_total <= 6_000:
+            pool = tier_mid or tier_high
+        else:
+            pool = tier_high or tier_mid
+        
+        if not pool:
+            continue
+        
+        primary = random.choice(pool)
+        items_for_order = [(primary, 1)]
+        
+        # 35% chance of adding an accessory
+        if random.random() < 0.35 and accessories:
+            acc = random.choice(accessories)
+            if acc[0] != primary[0]:  # Different SKU
+                items_for_order.append((acc, 1))
+        
+        for idx, (cat_row, qty) in enumerate(items_for_order):
+            sku, title, variant, sell_price, _cost, _stock = cat_row
+            line_items_batch.append({
+                "id": str(uuid.uuid4()),
+                "tenant_id": ONE8_TENANT_ID,
+                "order_id": order_id,
+                "line_item_index": idx,
+                "sku": sku,
+                "product_title": title,
+                "variant_title": variant,
+                "quantity": qty,
+                "unit_price": float(sell_price),
+                "order_created_at": order_created_at,
+            })
+    
+    # Insert line items
+    if line_items_batch:
+        db.execute(
+            text("""
+                INSERT INTO shopify_order_line_items (
+                    id, tenant_id, order_id, line_item_index,
+                    sku, product_title, variant_title,
+                    quantity, unit_price, order_created_at
+                ) VALUES (
+                    :id, :tenant_id, :order_id, :line_item_index,
+                    :sku, :product_title, :variant_title,
+                    :quantity, :unit_price, :order_created_at
+                )
+            """),
+            line_items_batch,
+        )
+        db.commit()
+    
+    avg_items = len(line_items_batch) / len(orders) if orders else 0
+    
+    return {
+        "line_items_created": len(line_items_batch),
+        "orders_processed": len(orders),
+        "avg_items_per_order": round(avg_items, 2),
+    }
+
+
 def run_daily_simulation(target_date: date | None = None) -> dict[str, Any]:
     """
     Run daily data simulation for One8 tenant.
@@ -534,19 +784,25 @@ def run_daily_simulation(target_date: date | None = None) -> dict[str, Any]:
         orders_stats = generate_daily_orders(db, connector_id, target_date)
         refunds_stats = generate_daily_refunds(db, connector_id)
         ad_spend_stats = generate_daily_ad_spend(db, connector_id, target_date)
+        multi_channel_stats = generate_daily_multi_channel_spend(db, connector_id, target_date)
+        line_items_stats = generate_daily_line_items(db, target_date)
 
         logger.info(
             f"Successfully generated: {orders_stats['orders_created']} orders, "
+            f"{line_items_stats['line_items_created']} line items, "
             f"{refunds_stats['refunds_created']} refunds, "
-            f"₹{ad_spend_stats['total_spend']:,.0f} ad spend"
+            f"₹{ad_spend_stats['total_spend']:,.0f} ad spend, "
+            f"₹{multi_channel_stats['total_spend']:,.0f} multi-channel spend"
         )
 
         return {
             "status": "success",
             "date": str(target_date),
             "orders": orders_stats,
+            "line_items": line_items_stats,
             "refunds": refunds_stats,
             "ad_spend": ad_spend_stats,
+            "multi_channel": multi_channel_stats,
         }
 
     except Exception as e:

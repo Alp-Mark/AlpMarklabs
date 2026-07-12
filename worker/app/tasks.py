@@ -895,33 +895,9 @@ def _default_shopify_order_fetcher(
     connector: ConnectorIntegration,
     now: datetime,
 ) -> list[dict[str, object]]:
-    base_id = str(connector.id).replace("-", "")[:8]
-    return [
-        {
-            "external_order_id": f"{base_id}-001",
-            "order_number": f"AM-{base_id}-001",
-            "currency": "USD",
-            "total_amount": 149.99,
-            "discount_amount": 10.0,
-            "shipping_amount": 5.99,
-            "refund_amount": None,
-            "is_refunded": False,
-            "order_created_at": now - timedelta(hours=4),
-            "customer_id": f"CUST-{base_id}-A",
-        },
-        {
-            "external_order_id": f"{base_id}-002",
-            "order_number": f"AM-{base_id}-002",
-            "currency": "USD",
-            "total_amount": 89.5,
-            "discount_amount": None,
-            "shipping_amount": 4.99,
-            "refund_amount": 89.5,
-            "is_refunded": True,
-            "order_created_at": now - timedelta(hours=2),
-            "customer_id": f"CUST-{base_id}-B",
-        },
-    ]
+    # Return empty list - no test orders in production.
+    # Real Shopify API integration should provide actual order fetcher.
+    return []
 
 
 def _record_connector_sync_failure(
@@ -1291,31 +1267,9 @@ def _default_shopify_inventory_fetcher(
     connector: ConnectorIntegration,
     now: datetime,
 ) -> list[dict[str, object]]:
-    base_id = str(connector.id).replace("-", "")[:8]
-    return [
-        {
-            "external_inventory_item_id": f"{base_id}-inv-001",
-            "sku": f"SKU-{base_id}-001",
-            "product_title": "Core Tee",
-            "variant_title": "Black / M",
-            "available_quantity": 42,
-            "reorder_point": 20,
-            "cost_per_unit": 18.50,
-            "location_id": "LOC-MAIN",
-            "synced_at": now,
-        },
-        {
-            "external_inventory_item_id": f"{base_id}-inv-002",
-            "sku": f"SKU-{base_id}-002",
-            "product_title": "Core Tee",
-            "variant_title": "Black / L",
-            "available_quantity": 27,
-            "reorder_point": None,
-            "cost_per_unit": None,
-            "location_id": None,
-            "synced_at": now,
-        },
-    ]
+    # Return empty list - no test inventory in production.
+    # Real Shopify API integration should provide actual inventory fetcher.
+    return []
 
 
 def run_shopify_inventory_sync_job(
