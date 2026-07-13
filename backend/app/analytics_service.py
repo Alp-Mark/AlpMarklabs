@@ -18,6 +18,7 @@ from backend.app.db.models import (
 from backend.app.schemas.analytics import (
     ChannelBreakdownItem,
     ChannelBreakdownResponse,
+    ProductVariantsResponse,
     TopProduct,
     TopProductsResponse,
 )
@@ -291,7 +292,7 @@ def get_product_variants(
     product_title: str,
     period_start: date,
     period_end: date,
-) -> "ProductVariantsResponse":
+) -> ProductVariantsResponse:
     """Get individual variants (SKUs) for a specific product.
 
     Shows revenue and quantity metrics for each size/color variant of a product.
