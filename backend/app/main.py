@@ -16,6 +16,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from backend.app import (
+    analytics_service,
     date_utils,
     executive_service,
     growth_service,
@@ -153,6 +154,10 @@ from backend.app.schemas.analysis_view import (
     SavedAnalysisViewCreateRequest,
     SavedAnalysisViewListResponse,
     SavedAnalysisViewResponse,
+)
+from backend.app.schemas.analytics import (
+    ChannelBreakdownResponse,
+    TopProductsResponse,
 )
 from backend.app.schemas.annotation import (
     AnnotationCreateRequest,
@@ -12227,5 +12232,97 @@ def delete_role(
     
     db.delete(role)
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Analytics Endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get(
+    "/tenants/{tenant_id}/analytics/top-products",
+    response_model=TopProductsResponse,
+)
+def get_top_products(
+    tenant_id: uuid.UUID,
+    _auth: AdminSettingsDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    period_start: date = Query(..., description="Start date (YYYY-MM-DD)"),  # noqa: B008
+    period_end: date = Query(..., description="End date (YYYY-MM-DD)"),  # noqa: B008
+    limit: int = Query(10, ge=1, le=100, description="Number of products to return"),  # noqa: B008
+) -> TopProductsResponse:
+    """Get top-selling products by revenue in a given period.
+
+    Returns the top N products (by total revenue) with metrics like quantity sold,
+    average unit price, and average quantity per order.
+
+    Args:
+        tenant_id: Tenant identifier
+        period_start: Start date for analysis (inclusive)
+        period_end: End date for analysis (inclusive)
+        limit: Number of top products to return (default 10, max 100)
+
+    Returns:
+        TopProductsResponse with top products and period metadata
+
+    Raises:
+        404: If tenant not found
+    """
+    _get_tenant_or_404(db, tenant_id)
+
+    return analytics_service.get_top_products(
+        db=db,
+        tenant_id=tenant_id,
+        period_start=period_start,
+        period_end=period_end,
+        limit=limit,
+    )
+
+
+@app.get(
+    "/tenants/{tenant_id}/analytics/channel-breakdown",
+    response_model=ChannelBreakdownResponse,
+)
+def get_channel_breakdown(
+    tenant_id: uuid.UUID,
+    _auth: AdminSettingsDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    period_start: date = Query(..., description="Start date (YYYY-MM-DD)"),  # noqa: B008
+    period_end: date = Query(..., description="End date (YYYY-MM-DD)"),  # noqa: B008
+) -> ChannelBreakdownResponse:
+    """Get breakdown of orders and revenue by marketing channel.
+
+    Provides a donut/pie chart breakdown showing which channels (Meta, Google,
+    Email, Influencer, TV/Streaming, Affiliate, Organic, Direct) drive revenue.
+
+    Channel attribution:
+    - Meta: Orders attributed to Meta ad spend
+    - Google: Orders attributed to Google ad spend
+    - Email: Orders from email/SMS campaigns
+    - Influencer: Orders from influencer partnerships
+    - TV/Streaming: Orders from TV/streaming ads
+    - Affiliate: Orders from affiliate programs
+    - Organic: Orders not attributed to paid channels
+    - Direct: Direct/dark traffic
+
+    Args:
+        tenant_id: Tenant identifier
+        period_start: Start date for analysis (inclusive)
+        period_end: End date for analysis (inclusive)
+
+    Returns:
+        ChannelBreakdownResponse with channel breakdown and totals
+
+    Raises:
+        404: If tenant not found
+    """
+    _get_tenant_or_404(db, tenant_id)
+
+    return analytics_service.get_channel_breakdown(
+        db=db,
+        tenant_id=tenant_id,
+        period_start=period_start,
+        period_end=period_end,
+    )
 
 
