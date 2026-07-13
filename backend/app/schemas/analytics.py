@@ -32,6 +32,33 @@ class TopProductsResponse(BaseModel):
     total_orders: int  # Total orders in period
 
 
+class ProductVariant(BaseModel):
+    """Individual product variant with performance metrics."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    sku: str
+    variant_title: str
+    quantity_sold: int
+    total_revenue: float  # ₹ total revenue from this variant
+    avg_unit_price: float  # Average price per unit
+    unit_price: float  # Single unit price
+
+
+class ProductVariantsResponse(BaseModel):
+    """Product variants detail response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    product_title: str
+    variants: list[ProductVariant]
+    total_revenue: float
+    total_quantity: int
+    period_start: date
+    period_end: date
+    currency: str = "INR"
+
+
 class ChannelBreakdownItem(BaseModel):
     """Breakdown of orders/revenue by channel."""
 

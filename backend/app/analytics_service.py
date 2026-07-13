@@ -282,3 +282,81 @@ def get_channel_breakdown(
         period_end=period_end,
         currency="INR",
     )
+
+
+def get_product_variants(
+    db: Session,
+    tenant_id: UUID,
+    product_title: str,
+    period_start: date,
+    period_end: date,
+) -> "ProductVariantsResponse":
+    """Get individual variants (SKUs) for a specific product.
+
+    Shows revenue and quantity metrics for each size/color variant of a product.
+
+    Args:
+        db: Database session
+        tenant_id: Tenant identifier
+        product_title: Product name to fetch variants for
+        period_start: Start date (inclusive)
+        period_end: End date (inclusive)
+
+    Returns:
+        ProductVariantsResponse with variant breakdown and totals
+    """
+    from backend.app.schemas.analytics import ProductVariant, ProductVariantsResponse
+
+    period_end_inclusive = period_end + timedelta(days=1)
+
+    # Get all variants of the product in the period
+    stmt = select(
+        ShopifyOrderLineItem.sku,
+        ShopifyOrderLineItem.variant_title,
+        ShopifyOrderLineItem.unit_price,
+        func.sum(ShopifyOrderLineItem.quantity).label("quantity_sold"),
+        func.sum(
+            ShopifyOrderLineItem.quantity * ShopifyOrderLineItem.unit_price
+        ).label("total_revenue"),
+        func.avg(ShopifyOrderLineItem.unit_price).label("avg_unit_price"),
+    ).where(
+        ShopifyOrderLineItem.tenant_id == tenant_id,
+        ShopifyOrderLineItem.product_title == product_title,
+        ShopifyOrderLineItem.order_created_at >= period_start,
+        ShopifyOrderLineItem.order_created_at < period_end_inclusive,
+    ).group_by(
+        ShopifyOrderLineItem.sku,
+        ShopifyOrderLineItem.variant_title,
+        ShopifyOrderLineItem.unit_price,
+    ).order_by(
+        func.sum(
+            ShopifyOrderLineItem.quantity * ShopifyOrderLineItem.unit_price
+        ).desc()
+    )
+
+    results = db.execute(stmt).fetchall()
+
+    variants = [
+        ProductVariant(
+            sku=row.sku or "unknown",
+            variant_title=row.variant_title or "Standard",
+            quantity_sold=int(row.quantity_sold or 0),
+            total_revenue=float(row.total_revenue or 0),
+            avg_unit_price=float(row.avg_unit_price or 0),
+            unit_price=float(row.unit_price or 0),
+        )
+        for row in results
+    ]
+
+    total_revenue = sum(v.total_revenue for v in variants)
+    total_quantity = sum(v.quantity_sold for v in variants)
+
+    return ProductVariantsResponse(
+        product_title=product_title,
+        variants=variants,
+        total_revenue=total_revenue,
+        total_quantity=total_quantity,
+        period_start=period_start,
+        period_end=period_end,
+        currency="INR",
+    )

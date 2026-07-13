@@ -157,6 +157,7 @@ from backend.app.schemas.analysis_view import (
 )
 from backend.app.schemas.analytics import (
     ChannelBreakdownResponse,
+    ProductVariantsResponse,
     TopProductsResponse,
 )
 from backend.app.schemas.annotation import (
@@ -12321,6 +12322,46 @@ def get_channel_breakdown(
     return analytics_service.get_channel_breakdown(
         db=db,
         tenant_id=tenant_id,
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+
+@app.get(
+    "/tenants/{tenant_id}/analytics/products/{product_title}/variants",
+    response_model=ProductVariantsResponse,
+)
+def get_product_variants(
+    tenant_id: uuid.UUID,
+    product_title: str,
+    _auth: ExecutiveViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    period_start: date = Query(..., description="Start date (YYYY-MM-DD)"),  # noqa: B008
+    period_end: date = Query(..., description="End date (YYYY-MM-DD)"),  # noqa: B008
+) -> ProductVariantsResponse:
+    """Get individual product variants (SKUs) with performance metrics.
+
+    Returns all size/color variants of a specific product, showing individual
+    revenue and quantity metrics for each SKU.
+
+    Args:
+        tenant_id: Tenant identifier
+        product_title: Product name to fetch variants for
+        period_start: Start date for analysis (inclusive)
+        period_end: End date for analysis (inclusive)
+
+    Returns:
+        ProductVariantsResponse with variant breakdown and totals
+
+    Raises:
+        404: If tenant not found
+    """
+    _get_tenant_or_404(db, tenant_id)
+
+    return analytics_service.get_product_variants(
+        db=db,
+        tenant_id=tenant_id,
+        product_title=product_title,
         period_start=period_start,
         period_end=period_end,
     )
