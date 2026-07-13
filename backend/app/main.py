@@ -2684,11 +2684,12 @@ def trigger_snapshot_tasks(
         ) from e
 
 
-@app.post("/internal/populate-inventory-images")
+@app.post("/admin/inventory/populate-images")
 def populate_inventory_images(
+    _auth: SuperAdminDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> dict[str, Any]:
-    """Populate image_url in ShopifyInventoryItem from one8_products.json.
+    """Populate image_url in ShopifyInventoryItem from one8_products.json (super-admin only).
     
     Reads product images from one8_products.json and updates inventory items
     with first product image for each SKU. Does not re-seed; only updates
