@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from backend.app.db.models import (
     GoogleAdSpend,
-    MarketingChannelSpend,
     MetaAdSpend,
     ShopifyOrder,
     ShopifyOrderLineItem,
