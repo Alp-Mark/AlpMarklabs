@@ -64,6 +64,7 @@ from backend.app.db.models import (
     Role,
     SavedAnalysisView,
     Scenario,
+    ShopifyInventoryItem,
     Simulation,
     SubscriptionPlan,
     SupportTicket,
