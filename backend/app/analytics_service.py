@@ -29,9 +29,10 @@ def get_top_products(
     period_end: date,
     limit: int = 10,
 ) -> TopProductsResponse:
-    """Get top-selling products by quantity and revenue.
+    """Get top-selling products by revenue in a given period.
 
-    Aggregates across all line items in the period, ranking by revenue.
+    Products are aggregated across all SKU variants (sizes, colors, etc).
+    Ranks by total revenue, showing distinct products and their performance.
 
     Args:
         db: Database session
@@ -43,13 +44,12 @@ def get_top_products(
     Returns:
         TopProductsResponse with top products and metadata
     """
-    # Get all line items in period, grouped by SKU
+    # Get all line items in period, grouped by product (across all variants/sizes)
     period_end_inclusive = period_end + timedelta(days=1)
 
     stmt = select(
-        ShopifyOrderLineItem.sku,
         ShopifyOrderLineItem.product_title,
-        ShopifyOrderLineItem.variant_title,
+        func.count(func.distinct(ShopifyOrderLineItem.sku)).label("variant_count"),
         func.sum(ShopifyOrderLineItem.quantity).label("quantity_sold"),
         func.sum(
             ShopifyOrderLineItem.quantity * ShopifyOrderLineItem.unit_price
@@ -63,9 +63,7 @@ def get_top_products(
         ShopifyOrderLineItem.order_created_at >= period_start,
         ShopifyOrderLineItem.order_created_at < period_end_inclusive,
     ).group_by(
-        ShopifyOrderLineItem.sku,
         ShopifyOrderLineItem.product_title,
-        ShopifyOrderLineItem.variant_title,
     ).order_by(
         func.sum(
             ShopifyOrderLineItem.quantity * ShopifyOrderLineItem.unit_price
@@ -76,20 +74,19 @@ def get_top_products(
 
     products = [
         TopProduct(
-            sku=row.sku or "unknown",
             product_title=row.product_title,
-            variant_title=row.variant_title,
             quantity_sold=int(row.quantity_sold or 0),
             total_revenue=float(row.total_revenue or 0),
             avg_unit_price=float(row.avg_unit_price or 0),
             avg_quantity_per_order=float(row.avg_quantity_per_order or 1),
+            variant_count=int(row.variant_count or 0),
         )
         for row in results
     ]
 
     # Get total stats
     total_products_stmt = select(
-        func.count(func.distinct(ShopifyOrderLineItem.sku))
+        func.count(func.distinct(ShopifyOrderLineItem.product_title))
     ).where(
         ShopifyOrderLineItem.tenant_id == tenant_id,
         ShopifyOrderLineItem.order_created_at >= period_start,

@@ -12,13 +12,12 @@ class TopProduct(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    sku: str
     product_title: str
-    variant_title: str | None
     quantity_sold: int
     total_revenue: float  # ₹ total revenue from this product
     avg_unit_price: float  # Average price per unit sold
     avg_quantity_per_order: float  # Avg quantity purchased in orders
+    variant_count: int  # Number of SKU variants available
 
 
 class TopProductsResponse(BaseModel):
