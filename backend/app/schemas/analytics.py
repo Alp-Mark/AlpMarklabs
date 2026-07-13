@@ -58,4 +58,4 @@ class ChannelBreakdownResponse(BaseModel):
     total_orders: int
     period_start: date
     period_end: date
-    currency: st
+    currency: str

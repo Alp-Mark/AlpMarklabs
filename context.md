@@ -321,6 +321,7 @@ What they need to see:
 - Onboarding completion tracker showing setup progress across users, integrations, and configurations.
 
 What they can do:
+- In his initial setup he also needs to upload logo 
 - Invite new users to the brand account by email.
 - Assign and modify roles for brand users (all roles except Executive Owner).
 - Approve or reject pending access requests.

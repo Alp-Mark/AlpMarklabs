@@ -21,6 +21,7 @@ import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import TypedDict
 
 backend_path = Path(__file__).parent.parent / "backend"
 sys.path.insert(0, str(backend_path))
@@ -73,6 +74,176 @@ ONE8_BRAND = {
 _META_EPOCH   = date(2026, 1, 1)
 # Google: search/shopping campaigns — 33-day cycle, different epoch = independent timing
 _GOOGLE_EPOCH = date(2026, 1, 10)
+# Influencer: partnership cycles — 38-day cycle
+_INFLUENCER_EPOCH = date(2026, 1, 5)
+# Email/SMS: campaign waves — 28-day cycle (monthly cadence)
+_EMAIL_EPOCH = date(2026, 1, 15)
+# TV/Streaming: ad flight cycles — 50-day cycle (longer commitment periods)
+_TV_EPOCH = date(2026, 1, 20)
+# Affiliate: commission period cycles — 30-day cycle
+_AFFILIATE_EPOCH = date(2026, 1, 8)
+
+# ── Multi-Channel Configuration ────────────────────────────────────────────────
+# Additional marketing channels beyond Meta/Google.
+# When Klaviyo is integrated, email data will sync here with channel_name="email".
+
+
+class ChannelConfig(TypedDict):
+    """Type definition for multi-channel configuration."""
+    base_spend: int
+    base_cac: int
+    cac_at_2x_pct: int
+    campaigns: list[str]
+
+
+class InfluencerProfile(TypedDict):
+    """Individual influencer profile for granular tracking."""
+    name: str
+    handle: str
+    tier: str  # "nano", "micro", "macro"
+    niche: str
+    followers: int
+    monthly_fee: int  # Total fee for month-long campaign
+    code: str  # Discount code
+    cac: int  # Expected CAC
+
+
+# ── Influencer Roster (10 real sports/fitness influencers) ─────────────────────
+# Individual influencers hired by One8 for campaigns.
+# Each gets unique discount code, tracked separately.
+INFLUENCER_ROSTER: list[InfluencerProfile] = [
+    # ── Nano influencers (1K-10K followers, ₹1-3K/post, 2-3 posts/month) ────
+    {
+        "name": "Priya Mehta",
+        "handle": "@fitwithpriya",
+        "tier": "nano",
+        "niche": "fitness",
+        "followers": 8500,
+        "monthly_fee": 6000,  # ₹6K for 3 posts
+        "code": "PRIYA10",
+        "cac": 750,  # Low CAC (high engagement, niche audience)
+    },
+    {
+        "name": "Arjun Desai",
+        "handle": "@mumbai_runner",
+        "tier": "nano",
+        "niche": "running",
+        "followers": 6200,
+        "monthly_fee": 4500,  # ₹4.5K for 3 posts
+        "code": "ARJUN15",
+        "cac": 820,
+    },
+    {
+        "name": "Neha Sharma",
+        "handle": "@yogawithneha",
+        "tier": "nano",
+        "niche": "yoga",
+        "followers": 9800,
+        "monthly_fee": 7500,  # ₹7.5K for 3 posts
+        "code": "NEHA10",
+        "cac": 890,
+    },
+    # ── Micro influencers (10K-100K, ₹5-15K/post, 2 posts/month) ────────────
+    {
+        "name": "Rohan Kapoor",
+        "handle": "@rohans_fitness",
+        "tier": "micro",
+        "niche": "gym/strength",
+        "followers": 32000,
+        "monthly_fee": 14000,  # ₹14K for 2 posts
+        "code": "ROHAN15",
+        "cac": 980,
+    },
+    {
+        "name": "Anjali Rao",
+        "handle": "@fitandfabulous_anj",
+        "tier": "micro",
+        "niche": "lifestyle fitness",
+        "followers": 48000,
+        "monthly_fee": 18000,  # ₹18K for 2 posts
+        "code": "ANJALI20",
+        "cac": 1050,
+    },
+    {
+        "name": "Kabir Singh",
+        "handle": "@cricket_coach_kabir",
+        "tier": "micro",
+        "niche": "cricket training",
+        "followers": 55000,
+        "monthly_fee": 20000,  # ₹20K for 2 posts
+        "code": "KABIR15",
+        "cac": 1120,
+    },
+    {
+        "name": "Shreya Iyer",
+        "handle": "@shreyasfitjourney",
+        "tier": "micro",
+        "niche": "weight loss",
+        "followers": 68000,
+        "monthly_fee": 24000,  # ₹24K for 2 posts
+        "code": "SHREYA20",
+        "cac": 1180,
+    },
+    # ── Macro influencers (100K-500K, ₹20-50K/post, 1-2 posts/month) ────────
+    {
+        "name": "Aditya Verma",
+        "handle": "@aditya_athlete",
+        "tier": "macro",
+        "niche": "sports nutrition",
+        "followers": 180000,
+        "monthly_fee": 70000,  # ₹70K for 2 posts
+        "code": "ADITYA15",
+        "cac": 1650,  # Higher CAC (brand awareness, harder attribution)
+    },
+    {
+        "name": "Meera Patel",
+        "handle": "@meerasportsstyle",
+        "tier": "macro",
+        "niche": "athleisure/lifestyle",
+        "followers": 240000,
+        "monthly_fee": 80000,  # ₹80K for 2 posts
+        "code": "MEERA20",
+        "cac": 1780,
+    },
+    {
+        "name": "Vikram Malhotra",
+        "handle": "@vikrams_training",
+        "tier": "macro",
+        "niche": "personal training/HIIT",
+        "followers": 320000,
+        "monthly_fee": 100000,  # ₹1L for 2 posts
+        "code": "VIKRAM15",
+        "cac": 1920,  # Highest CAC (largest reach, lowest conversion rate)
+    },
+]
+
+
+MULTI_CHANNELS: dict[str, ChannelConfig] = {
+    "influencer": {
+        "base_spend":   25_000,   # ₹25K/day avg across all 10 influencers
+        "base_cac":     1_100,    # Blended CAC across nano/micro/macro
+        "cac_at_2x_pct": 50,      # Saturates quickly (limited quality influencers)
+        "campaigns": [inf["name"] for inf in INFLUENCER_ROSTER],  # Individual tracking
+    },
+    "email": {
+        "base_spend":   15_000,   # ₹15K/day (Klaviyo fees + SMS)
+        "base_cac":     380,      # Low CAC (owned audience)
+        "cac_at_2x_pct": 20,      # Minimal saturation (list size is constraint)
+        "campaigns": ["Win-Back", "Abandoned Cart", "Product Launch"],
+    },
+    "tv_streaming": {
+        "base_spend":   50_000,   # ₹50K/day (Hotstar, Sony Liv during cricket)
+        "base_cac":     1_500,    # High CAC (brand awareness play, hard to attribute)
+        "cac_at_2x_pct": 65,      # Heavy saturation (frequency burnout)
+        "campaigns": ["IPL Sponsorship", "World Cup Ads", "Brand Films"],
+    },
+    "affiliate": {
+        "base_spend":   20_000,   # ₹20K/day (CashKaro, GoPaisa, etc.)
+        "base_cac":     750,      # Mid CAC (performance-based)
+        "cac_at_2x_pct": 35,      # Moderate saturation (finite affiliate reach)
+        "campaigns": ["Cashback Networks", "Coupon Sites", "Rewards Programs"],
+    },
+}
 
 # Pre-generated loyal customer pool (deterministic IDs, shared with simulator)
 _LOYAL_POOL = [
@@ -147,6 +318,46 @@ def google_campaign_phase(d: date) -> float:
     return 1.0
 
 
+def influencer_campaign_phase(d: date) -> float:
+    """Influencer spend multiplier from partnership cycle (38-day period)."""
+    phase = (d - _INFLUENCER_EPOCH).days % 38
+    if 5 <= phase <= 18:
+        return 1.7   # 2-week collab push
+    if phase <= 25:
+        return 1.2   # wind-down
+    return 0.95
+
+
+def email_campaign_phase(d: date) -> float:
+    """Email/SMS spend multiplier from campaign wave cycle (28-day period)."""
+    phase = (d - _EMAIL_EPOCH).days % 28
+    if 8 <= phase <= 12:
+        return 1.5   # 5-day big push (product launch, sale)
+    if phase <= 18:
+        return 1.15  # wind-down
+    return 0.90
+
+
+def tv_campaign_phase(d: date) -> float:
+    """TV/Streaming spend multiplier from ad flight cycle (50-day period)."""
+    phase = (d - _TV_EPOCH).days % 50
+    if 10 <= phase <= 30:
+        return 1.8   # 3-week heavy flight
+    if phase <= 40:
+        return 1.1   # wind-down
+    return 0.70  # dark period (no TV)
+
+
+def affiliate_campaign_phase(d: date) -> float:
+    """Affiliate spend multiplier from commission period cycle (30-day period)."""
+    phase = (d - _AFFILIATE_EPOCH).days % 30
+    if 12 <= phase <= 20:
+        return 1.6   # 9-day bonus commission period
+    if phase <= 25:
+        return 1.2   # wind-down
+    return 1.0
+
+
 # ── Spend generators ───────────────────────────────────────────────────────────
 
 def get_meta_spend(d: date, growth_start: date, growth_days: int) -> int:
@@ -172,6 +383,42 @@ def get_google_spend(d: date, growth_start: date, growth_days: int) -> int:
     return max(
         0,
         int(ONE8_BRAND["google_base_spend"] * growth * phase * variance * weekend_cut),
+    )
+
+
+def get_channel_spend(
+    channel_name: str,
+    d: date,
+    growth_start: date,
+    growth_days: int,
+) -> int:
+    """Generic spend generator for any multi-channel (influencer, email, TV, affiliate)."""
+    config = MULTI_CHANNELS[channel_name]
+    days_elapsed = max(0, (d - growth_start).days)
+    growth = 1.0 + min(1.0, days_elapsed / growth_days) * 0.10
+    
+    # Channel-specific phase function
+    phase_funcs = {
+        "influencer": influencer_campaign_phase,
+        "email": email_campaign_phase,
+        "tv_streaming": tv_campaign_phase,
+        "affiliate": affiliate_campaign_phase,
+    }
+    phase = phase_funcs[channel_name](d)
+    
+    variance = random.uniform(0.85, 1.15)
+    
+    # Email/affiliate run 7 days; TV has dark periods; influencer has weekend lift
+    if channel_name == "influencer":
+        weekend_mult = 1.15 if d.weekday() in (5, 6) else 1.0
+    elif channel_name == "tv_streaming":
+        weekend_mult = 0.80 if d.weekday() in (5, 6) else 1.0  # TV ads cheaper on weekends
+    else:
+        weekend_mult = 1.0
+    
+    return max(
+        0,
+        int(config["base_spend"] * growth * phase * variance * weekend_mult),
     )
 
 
@@ -213,6 +460,17 @@ def get_google_conversions(google_spend: int) -> int:
         ONE8_BRAND["google_base_spend"],
         ONE8_BRAND["google_base_cac"],
         ONE8_BRAND["google_cac_at_2x_spend_increase_pct"],
+    )
+
+
+def get_channel_conversions(channel_name: str, channel_spend: int) -> int:
+    """Generic conversions calculator for any multi-channel."""
+    config = MULTI_CHANNELS[channel_name]
+    return _paid_conversions(
+        channel_spend,
+        config["base_spend"],
+        config["base_cac"],
+        config["cac_at_2x_pct"],
     )
 
 
@@ -315,7 +573,7 @@ def seed_realistic_data(days: int = 120) -> None:
     print("🗑️  Wiping existing One8 data...")
     tables = [
         "shopify_order_line_items", "shopify_orders",
-        "meta_ad_spends", "google_ad_spends",
+        "meta_ad_spends", "google_ad_spends", "marketing_channel_spends",
         "recommendations",
         "fitted_models",        # must be before optimization_runs (FK)
         "optimization_runs",
@@ -352,10 +610,12 @@ def seed_realistic_data(days: int = 120) -> None:
 
     meta_batch:   list[dict] = []
     google_batch: list[dict] = []
+    multi_channel_batch: list[dict] = []  # For influencer, email, TV, affiliate
     orders_batch: list[dict] = []
 
     total_meta_spend   = 0
     total_google_spend = 0
+    total_multi_channel_spend = {ch: 0.0 for ch in MULTI_CHANNELS.keys()}
     total_orders       = 0
     total_revenue      = Decimal("0")
     total_refunds      = 0
@@ -465,6 +725,98 @@ def seed_realistic_data(days: int = 120) -> None:
                 "updated_at":           datetime.utcnow(),
             })
 
+        # ── Multi-Channel ad spend (influencer, email, TV, affiliate) ─────────
+        for channel_name, config in MULTI_CHANNELS.items():
+            
+            # ── Special handling for influencer channel (individual tracking) ─
+            if channel_name == "influencer":
+                # Each influencer is a separate campaign with monthly fees
+                # Not all influencers active every month (realistic scheduling)
+                month_str = d.strftime("%Y%m")  # e.g., "202605" for May 2026
+                
+                for influencer in INFLUENCER_ROSTER:
+                    # Influencer activity: 60% chance active in any given month
+                    # Use deterministic hash so same influencer always active/inactive same month
+                    is_active_this_month = hash(f"{influencer['name']}_{month_str}") % 10 < 6
+                    
+                    if not is_active_this_month:
+                        continue
+                    
+                    # Monthly fee amortized across ~30 days
+                    # Campaign "launches" on day 1-5 of month (most spend on launch day)
+                    day_of_month = d.day
+                    if day_of_month <= 5:
+                        # Launch day: 40% of monthly fee
+                        daily_spend = influencer["monthly_fee"] * 0.4
+                    elif day_of_month <= 15:
+                        # Mid-campaign: 30% spread across 10 days
+                        daily_spend = influencer["monthly_fee"] * 0.3 / 10
+                    elif day_of_month <= 25:
+                        # Wind-down: 20% spread across 10 days
+                        daily_spend = influencer["monthly_fee"] * 0.2 / 10
+                    else:
+                        # Tail: 10% spread across end of month
+                        daily_spend = influencer["monthly_fee"] * 0.1 / 5
+                    
+                    # Conversions based on individual CAC (not generic channel CAC)
+                    daily_conversions = max(0, int(daily_spend / influencer["cac"]))
+                    
+                    # Revenue: conversions × AOV (use seasonal AOV)
+                    daily_revenue_est = daily_conversions * get_seasonal_aov(current_dt)
+                    
+                    multi_channel_batch.append({
+                        "id":                   str(uuid.uuid4()),
+                        "tenant_id":            ONE8_TENANT_ID,
+                        "connector_id":         connector_id,
+                        "channel_name":         "influencer",
+                        "external_campaign_id": (
+                            f"influencer_{influencer['handle'].replace('@', '')}_{month_str}"
+                        ),
+                        "campaign_name":        f"{influencer['name']} ({influencer['niche'].title()})",
+                        "spend_date":           d,
+                        "currency":             "INR",
+                        "spend_amount":         float(daily_spend),
+                        "conversions":          daily_conversions,
+                        "revenue":              float(daily_revenue_est),
+                        "impressions":          None,  # Not tracked for influencers
+                        "clicks":               None,  # Not tracked for influencers
+                        "synced_at":            datetime.utcnow(),
+                        "created_at":           datetime.utcnow(),
+                        "updated_at":           datetime.utcnow(),
+                    })
+                    
+                    total_multi_channel_spend["influencer"] += daily_spend
+            
+            # ── Other channels (email, TV, affiliate): generic campaign logic ─
+            else:
+                channel_spend = get_channel_spend(channel_name, d, growth_start, days)
+                channel_conv = get_channel_conversions(channel_name, channel_spend)
+                
+                num_campaigns = len(config["campaigns"])
+                for campaign in config["campaigns"]:
+                    multi_channel_batch.append({
+                        "id":                   str(uuid.uuid4()),
+                        "tenant_id":            ONE8_TENANT_ID,
+                        "connector_id":         connector_id,
+                        "channel_name":         channel_name,
+                        "external_campaign_id": (
+                            f"{channel_name}_{campaign.replace(' ', '_')}_{d.strftime('%Y%m%d')}"
+                        ),
+                        "campaign_name":        campaign,
+                        "spend_date":           d,
+                        "currency":             "INR",
+                        "spend_amount":         float(channel_spend / num_campaigns),
+                        "conversions":          int(channel_conv / num_campaigns),
+                        "revenue":              None,  # Will be attributed via orders table
+                        "impressions":          None,
+                        "clicks":               None,
+                        "synced_at":            datetime.utcnow(),
+                        "created_at":           datetime.utcnow(),
+                        "updated_at":           datetime.utcnow(),
+                    })
+                
+                total_multi_channel_spend[channel_name] += channel_spend
+
         total_meta_spend   += meta_spend
         total_google_spend += google_spend
         total_orders       += total_daily
@@ -486,41 +838,96 @@ def seed_realistic_data(days: int = 120) -> None:
     # connection timeouts on long-running inserts over the public Railway proxy.
     print("💾 Inserting...")
 
-    CHUNK = 500  # rows per committed batch — keep INSERTs short (<3 s on proxy)
+    CHUNK = 100  # rows per committed batch — Railway proxy is very slow
 
     if meta_batch:
-        print(f"   Meta ad spend:   {len(meta_batch):,} rows")
-        with engine.begin() as conn:
-            conn.execute(text("""
-                INSERT INTO meta_ad_spends (
-                    id, tenant_id, connector_id, external_campaign_id,
-                    campaign_name,
-                    spend_date, currency, spend_amount,
-                    synced_at, created_at, updated_at
-                ) VALUES (
-                    :id, :tenant_id, :connector_id, :external_campaign_id,
-                    :campaign_name,
-                    :spend_date, :currency, :spend_amount,
-                    :synced_at, :created_at, :updated_at
-                ) ON CONFLICT DO NOTHING
-            """), meta_batch)
+        print(f"   Meta ad spend:   {len(meta_batch):,} rows (in {CHUNK}-row batches)")
+        for i in range(0, len(meta_batch), CHUNK):
+            chunk = meta_batch[i: i + CHUNK]
+            for attempt in range(3):
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text("""
+                            INSERT INTO meta_ad_spends (
+                                id, tenant_id, connector_id, external_campaign_id,
+                                campaign_name,
+                                spend_date, currency, spend_amount,
+                                synced_at, created_at, updated_at
+                            ) VALUES (
+                                :id, :tenant_id, :connector_id, :external_campaign_id,
+                                :campaign_name,
+                                :spend_date, :currency, :spend_amount,
+                                :synced_at, :created_at, :updated_at
+                            ) ON CONFLICT DO NOTHING
+                        """), chunk)
+                    break  # success
+                except Exception as exc:
+                    if attempt == 2:
+                        raise
+                    print(f"     ⚠️  batch {i}–{i+CHUNK} attempt {attempt+1} failed, retrying…")
+                    import time
+                    time.sleep(2)
 
     if google_batch:
-        print(f"   Google ad spend: {len(google_batch):,} rows")
-        with engine.begin() as conn:
-            conn.execute(text("""
-                INSERT INTO google_ad_spends (
-                    id, tenant_id, connector_id, external_campaign_id,
-                    campaign_name,
-                    spend_date, currency, spend_amount,
-                    synced_at, created_at, updated_at
-                ) VALUES (
-                    :id, :tenant_id, :connector_id, :external_campaign_id,
-                    :campaign_name,
-                    :spend_date, :currency, :spend_amount,
-                    :synced_at, :created_at, :updated_at
-                ) ON CONFLICT DO NOTHING
-            """), google_batch)
+        print(f"   Google ad spend: {len(google_batch):,} rows (in {CHUNK}-row batches)")
+        for i in range(0, len(google_batch), CHUNK):
+            chunk = google_batch[i: i + CHUNK]
+            for attempt in range(3):
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text("""
+                            INSERT INTO google_ad_spends (
+                                id, tenant_id, connector_id, external_campaign_id,
+                                campaign_name,
+                                spend_date, currency, spend_amount,
+                                synced_at, created_at, updated_at
+                            ) VALUES (
+                                :id, :tenant_id, :connector_id, :external_campaign_id,
+                                :campaign_name,
+                                :spend_date, :currency, :spend_amount,
+                                :synced_at, :created_at, :updated_at
+                            ) ON CONFLICT DO NOTHING
+                        """), google_batch)
+                    break  # success
+                except Exception as exc:
+                    if attempt == 2:
+                        raise
+                    print(f"     ⚠️  batch {i}–{i+CHUNK} attempt {attempt+1} failed, retrying…")
+                    import time
+                    time.sleep(2)
+
+    if multi_channel_batch:
+        print(f"   Multi-channel:   {len(multi_channel_batch):,} rows "
+              f"(in {CHUNK}-row batches)")
+        for i in range(0, len(multi_channel_batch), CHUNK):
+            chunk = multi_channel_batch[i: i + CHUNK]
+            for attempt in range(3):
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text("""
+                            INSERT INTO marketing_channel_spends (
+                                id, tenant_id, connector_id, channel_name,
+                                external_campaign_id, campaign_name,
+                                spend_date, currency, spend_amount,
+                                conversions, revenue, impressions, clicks,
+                                synced_at, created_at, updated_at
+                            ) VALUES (
+                                :id, :tenant_id, :connector_id, :channel_name,
+                                :external_campaign_id, :campaign_name,
+                                :spend_date, :currency, :spend_amount,
+                                :conversions, :revenue, :impressions, :clicks,
+                                :synced_at, :created_at, :updated_at
+                            ) ON CONFLICT DO NOTHING
+                        """), chunk)
+                    break  # success
+                except Exception as exc:
+                    if attempt == 2:
+                        raise
+                    print(f"     ⚠️  batch {i}–{i+CHUNK} attempt {attempt+1} failed, retrying…")
+                    import time
+                    time.sleep(2)
+            end = min(i + CHUNK, len(multi_channel_batch))
+            print(f"     committed {end:,} / {len(multi_channel_batch):,}")
 
     if orders_batch:
         print(f"   Orders:          {len(orders_batch):,} rows"
@@ -553,8 +960,9 @@ def seed_realistic_data(days: int = 120) -> None:
                 except Exception as exc:
                     if attempt == 2:
                         raise
-                    print(f"     ⚠️  batch {i}–{i+CHUNK} attempt {attempt+1} failed"
-                          f" ({exc!s:.60}), retrying…")
+                    print(f"     ⚠️  batch {i}–{i+CHUNK} attempt {attempt+1} failed, retrying…")
+                    import time
+                    time.sleep(2)
             end = min(i + CHUNK, len(orders_batch))
             print(f"     committed {end:,} / {len(orders_batch):,}")
 
@@ -708,7 +1116,7 @@ def seed_realistic_data(days: int = 120) -> None:
 
     # Assign line items to all orders
     # Bucket variants by price tier for realistic order composition.
-    print("   Creating line items for all orders...")
+    print("   Creating line items (streaming batches)...")
 
     tier_low    = [c for c in CATALOG if c[3] <= 2_500]
     tier_mid    = [c for c in CATALOG if 2_501 <= c[3] <= 5_500]
@@ -720,103 +1128,131 @@ def seed_realistic_data(days: int = 120) -> None:
             "DELETE FROM shopify_order_line_items WHERE tenant_id = :tid"
         ), {"tid": ONE8_TENANT_ID})
 
-    all_order_rows: list[tuple] = []
-    with engine.connect() as conn:
-        offset = 0
-        while True:
-            rows = conn.execute(text(
-                "SELECT id, total_amount, order_created_at "
-                "FROM shopify_orders WHERE tenant_id = :tid "
-                "ORDER BY order_created_at LIMIT 2000 OFFSET :offset"
-            ), {"tid": ONE8_TENANT_ID, "offset": offset}).fetchall()
-            if not rows:
-                break
-            all_order_rows += [(r[0], r[1], r[2]) for r in rows]
-            offset += 2000
-
     line_items_batch: list[dict] = []
     total_li = 0
+    orders_processed = 0
 
-    for order_id, order_total, order_created_at in all_order_rows:
-        if order_total <= 2_800:
-            pool = tier_low or tier_mid
-        elif order_total <= 6_000:
-            pool = tier_mid or tier_high
-        else:
-            pool = tier_high or tier_mid
+    # Stream-process orders in batches of 1000 to avoid loading all 58K into memory
+    offset = 0
+    while True:
+        with engine.connect() as conn:
+            order_rows = conn.execute(text(
+                "SELECT id, total_amount, order_created_at "
+                "FROM shopify_orders WHERE tenant_id = :tid "
+                "ORDER BY order_created_at LIMIT 1000 OFFSET :offset"
+            ), {"tid": ONE8_TENANT_ID, "offset": offset}).fetchall()
+        
+        if not order_rows:
+            break
+        
+        for row in order_rows:
+            order_id, order_total, order_created_at = row[0], row[1], row[2]
+            
+            if order_total <= 2_800:
+                pool = tier_low or tier_mid
+            elif order_total <= 6_000:
+                pool = tier_mid or tier_high
+            else:
+                pool = tier_high or tier_mid
 
-        primary = random.choice(pool)
-        items_for_order: list[tuple[tuple[str, str, str, int, int, int], int]] = [
-            (primary, 1)
-        ]
-        if random.random() < 0.35 and accessories:
-            acc = random.choice(accessories)
-            if acc[0] != primary[0]:
-                items_for_order.append((acc, 1))
+            primary = random.choice(pool)
+            items_for_order: list[tuple[tuple[str, str, str, int, int, int], int]] = [
+                (primary, 1)
+            ]
+            if random.random() < 0.35 and accessories:
+                acc = random.choice(accessories)
+                if acc[0] != primary[0]:
+                    items_for_order.append((acc, 1))
 
-        for idx, (cat_row, qty) in enumerate(items_for_order):
-            sku, title, variant, sell_price, _cost, _stock = cat_row
-            line_items_batch.append({
-                "id":               str(uuid.uuid4()),
-                "tenant_id":        ONE8_TENANT_ID,
-                "order_id":         order_id,
-                "line_item_index":  idx,
-                "sku":              sku,
-                "product_title":    title,
-                "variant_title":    variant,
-                "quantity":         qty,
-                "unit_price":       float(sell_price),
-                "order_created_at": order_created_at,
-            })
-            total_li += 1
+            for idx, (cat_row, qty) in enumerate(items_for_order):
+                sku, title, variant, sell_price, _cost, _stock = cat_row
+                line_items_batch.append({
+                    "id":               str(uuid.uuid4()),
+                    "tenant_id":        ONE8_TENANT_ID,
+                    "order_id":         order_id,
+                    "line_item_index":  idx,
+                    "sku":              sku,
+                    "product_title":    title,
+                    "variant_title":    variant,
+                    "quantity":         qty,
+                    "unit_price":       float(sell_price),
+                    "order_created_at": order_created_at,
+                })
+                total_li += 1
 
-        if len(line_items_batch) >= 500:
-            with engine.begin() as conn:
-                conn.execute(text("""
-                    INSERT INTO shopify_order_line_items (
-                        id, tenant_id, order_id, line_item_index,
-                        sku, product_title, variant_title,
-                        quantity, unit_price, order_created_at
-                    ) VALUES (
-                        :id, :tenant_id, :order_id, :line_item_index,
-                        :sku, :product_title, :variant_title,
-                        :quantity, :unit_price, :order_created_at
-                    ) ON CONFLICT DO NOTHING
-                """), line_items_batch)
-            line_items_batch = []
+            orders_processed += 1
+            
+            if len(line_items_batch) >= 100:  # Smaller batch for Railway proxy
+                for attempt in range(3):
+                    try:
+                        with engine.begin() as conn:
+                            conn.execute(text("""
+                                INSERT INTO shopify_order_line_items (
+                                    id, tenant_id, order_id, line_item_index,
+                                    sku, product_title, variant_title,
+                                    quantity, unit_price, order_created_at
+                                ) VALUES (
+                                    :id, :tenant_id, :order_id, :line_item_index,
+                                    :sku, :product_title, :variant_title,
+                                    :quantity, :unit_price, :order_created_at
+                                ) ON CONFLICT DO NOTHING
+                            """), line_items_batch)
+                        break  # success
+                    except Exception as exc:
+                        if attempt == 2:
+                            raise
+                        print(f"     ⚠️  line items batch attempt {attempt+1} failed, retrying…")
+                        import time
+                        time.sleep(2)
+                print(f"     {orders_processed:,} orders → {total_li:,} line items")
+                line_items_batch = []
+        
+        offset += 1000
 
     if line_items_batch:
-        with engine.begin() as conn:
-            conn.execute(text("""
-                INSERT INTO shopify_order_line_items (
-                    id, tenant_id, order_id, line_item_index,
-                    sku, product_title, variant_title,
-                    quantity, unit_price, order_created_at
-                ) VALUES (
-                    :id, :tenant_id, :order_id, :line_item_index,
-                    :sku, :product_title, :variant_title,
-                    :quantity, :unit_price, :order_created_at
-                ) ON CONFLICT DO NOTHING
-            """), line_items_batch)
+        for attempt in range(3):
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text("""
+                        INSERT INTO shopify_order_line_items (
+                            id, tenant_id, order_id, line_item_index,
+                            sku, product_title, variant_title,
+                            quantity, unit_price, order_created_at
+                        ) VALUES (
+                            :id, :tenant_id, :order_id, :line_item_index,
+                            :sku, :product_title, :variant_title,
+                            :quantity, :unit_price, :order_created_at
+                        ) ON CONFLICT DO NOTHING
+                    """), line_items_batch)
+                break  # success
+            except Exception as exc:
+                if attempt == 2:
+                    raise
+                print(f"     ⚠️  final line items batch attempt {attempt+1} failed, retrying…")
+                import time
+                time.sleep(2)
 
-    avg_li = total_li / len(all_order_rows) if all_order_rows else 0
+    avg_li = total_li / orders_processed if orders_processed else 0
     print(f"   ✅ {total_li:,} line items created ({avg_li:.1f} avg/order)\n")
 
     print("   ✅ Done\n")
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    total_spend = total_meta_spend + total_google_spend
+    total_spend = total_meta_spend + total_google_spend + sum(total_multi_channel_spend.values())
     print("=" * 70)
     print("✅ SEED COMPLETE")
     print("=" * 70)
-    print(f"  Meta spend:     ₹{total_meta_spend:>14,.0f}")
-    print(f"  Google spend:   ₹{total_google_spend:>14,.0f}")
-    print(f"  Total spend:    ₹{total_spend:>14,.0f}")
-    print(f"  Total orders:   {total_orders:>15,}")
+    print(f"  Meta spend:        ₹{total_meta_spend:>14,.0f}")
+    print(f"  Google spend:      ₹{total_google_spend:>14,.0f}")
+    for channel_name, channel_total in total_multi_channel_spend.items():
+        label = f"  {channel_name.replace('_', ' ').title()} spend:"
+        print(f"{label:22} ₹{channel_total:>14,.0f}")
+    print(f"  Total spend:       ₹{total_spend:>14,.0f}")
+    print(f"  Total orders:      {total_orders:>15,}")
     if total_orders:
         refund_pct = total_refunds / total_orders * 100
-        print(f"  Refunded:       {total_refunds:>15,}  ({refund_pct:.1f}%)")
-    print(f"  Net revenue:    ₹{total_revenue:>14,.0f}")
+        print(f"  Refunded:          {total_refunds:>15,}  ({refund_pct:.1f}%)")
+    print(f"  Net revenue:       ₹{total_revenue:>14,.0f}")
     if total_spend:
         print(f"  Blended ROAS:   {float(total_revenue) / total_spend:>18.2f}\u00d7")
     if total_orders:
