@@ -43,6 +43,7 @@ class ProductVariant(BaseModel):
     total_revenue: float  # ₹ total revenue from this variant
     avg_unit_price: float  # Average price per unit
     unit_price: float  # Single unit price
+    image_url: str | None = None  # Product image URL from Shopify CDN
 
 
 class ProductVariantsResponse(BaseModel):

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from backend.app.db.models import (
     GoogleAdSpend,
     MetaAdSpend,
+    ShopifyInventoryItem,
     ShopifyOrder,
     ShopifyOrderLineItem,
 )
@@ -319,6 +320,11 @@ def get_product_variants(
             ShopifyOrderLineItem.quantity * ShopifyOrderLineItem.unit_price
         ).label("total_revenue"),
         func.avg(ShopifyOrderLineItem.unit_price).label("avg_unit_price"),
+        ShopifyInventoryItem.image_url,
+    ).outerjoin(
+        ShopifyInventoryItem,
+        (ShopifyOrderLineItem.sku == ShopifyInventoryItem.sku)
+        & (ShopifyInventoryItem.tenant_id == tenant_id),
     ).where(
         ShopifyOrderLineItem.tenant_id == tenant_id,
         ShopifyOrderLineItem.product_title == product_title,
@@ -328,6 +334,7 @@ def get_product_variants(
         ShopifyOrderLineItem.sku,
         ShopifyOrderLineItem.variant_title,
         ShopifyOrderLineItem.unit_price,
+        ShopifyInventoryItem.image_url,
     ).order_by(
         func.sum(
             ShopifyOrderLineItem.quantity * ShopifyOrderLineItem.unit_price
@@ -344,6 +351,7 @@ def get_product_variants(
             total_revenue=float(row.total_revenue or 0),
             avg_unit_price=float(row.avg_unit_price or 0),
             unit_price=float(row.unit_price or 0),
+            image_url=row.image_url,
         )
         for row in results
     ]
