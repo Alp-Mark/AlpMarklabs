@@ -3,6 +3,21 @@
 import sys
 import os
 
+# CRITICAL: Override DATABASE_URL BEFORE any imports
+PUBLIC_URL = os.getenv("DATABASE_PUBLIC_URL") or os.getenv("DATABASE_URL")
+if not PUBLIC_URL:
+    print("❌ DATABASE_PUBLIC_URL not set")
+    sys.exit(1)
+
+# Transform URL for psycopg v3
+if PUBLIC_URL.startswith("postgresql://") and "+psycopg" not in PUBLIC_URL:
+    PUBLIC_URL = "postgresql+psycopg://" + PUBLIC_URL[len("postgresql://"):]
+elif PUBLIC_URL.startswith("postgres://"):
+    PUBLIC_URL = "postgresql+psycopg://" + PUBLIC_URL[len("postgres://"):]
+
+# Override DATABASE_URL so worker uses public URL
+os.environ["DATABASE_URL"] = PUBLIC_URL
+
 # Set Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.insert(0, '/app')
@@ -12,19 +27,7 @@ sys.path.insert(0, '/app/worker')
 from datetime import date
 from sqlalchemy import text, create_engine
 
-# Use PUBLIC database URL for external access
-DB_URL = os.getenv("DATABASE_PUBLIC_URL") or os.getenv("DATABASE_URL")
-if not DB_URL:
-    print("❌ DATABASE_PUBLIC_URL not set")
-    sys.exit(1)
-
-# Transform URL for psycopg v3
-if DB_URL.startswith("postgresql://") and "+psycopg" not in DB_URL:
-    DB_URL = "postgresql+psycopg://" + DB_URL[len("postgresql://"):]
-elif DB_URL.startswith("postgres://"):
-    DB_URL = "postgresql+psycopg://" + DB_URL[len("postgres://"):]
-
-engine = create_engine(DB_URL, pool_pre_ping=True)
+engine = create_engine(PUBLIC_URL, pool_pre_ping=True)
 
 TODAY = date(2026, 7, 13)
 TENANT_ID = "23165fa5-150b-4b6c-a637-b3dd24532c4d"
