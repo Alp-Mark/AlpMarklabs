@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
 
 from backend.app import (
@@ -2681,6 +2681,96 @@ def trigger_snapshot_tasks(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to queue snapshot tasks: {str(e)}",
         ) from e
+
+
+@app.post("/admin/inventory/populate-images")
+def populate_inventory_images(
+    _auth: SuperAdminDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> dict[str, Any]:
+    """Populate image_url in ShopifyInventoryItem from one8_products.json (super-admin only).
+    
+    Reads product images from one8_products.json and updates inventory items
+    with first product image for each SKU. Does not re-seed; only updates
+    image_url column on existing inventory items.
+    
+    Safe to run on existing data; preserves all other fields.
+    """
+    import json
+    from pathlib import Path
+    
+    try:
+        # Load one8_products.json
+        products_path = Path(__file__).parent.parent.parent / "data" / "one8_products.json"
+        
+        if not products_path.exists():
+            raise FileNotFoundError(f"Products file not found: {products_path}")
+        
+        with open(products_path) as f:
+            data = json.load(f)
+        
+        # Build sku → image_url mapping
+        sku_to_image: dict[str, str] = {}
+        for product in data.get("products", []):
+            images = product.get("images", [])
+            if not images:
+                continue
+            
+            first_image = images[0]
+            
+            # Extract SKUs from variants
+            for variant in product.get("variants", []):
+                sku = variant.get("sku")
+                if sku:
+                    sku_to_image[sku] = first_image
+        
+        # Get all current inventory items
+        result = db.execute(select(ShopifyInventoryItem.id, ShopifyInventoryItem.sku))
+        inventory_items = result.fetchall()
+        
+        # Update each with image_url if SKU matches
+        updated = 0
+        skipped = 0
+        
+        for item_id, sku in inventory_items:
+            if sku in sku_to_image:
+                image_url = sku_to_image[sku]
+                db.execute(
+                    update(ShopifyInventoryItem)
+                    .where(ShopifyInventoryItem.id == item_id)
+                    .values(image_url=image_url)
+                )
+                updated += 1
+            else:
+                skipped += 1
+        
+        db.commit()
+        
+        return {
+            "message": "✅ Inventory images populated successfully",
+            "inventory_items_updated": updated,
+            "skus_not_found": skipped,
+            "total_inventory_items": len(inventory_items),
+            "unique_skus_mapped": len(sku_to_image),
+            "next_step": "Images now available at /tenants/{id}/analytics/products/{title}/variants endpoint",
+        }
+    
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Products file not found: {str(e)}",
+        )
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to parse products JSON: {str(e)}",
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to populate inventory images: {str(e)}",
+        )
 
 
 @app.post("/admin/optimization-strategies/seed")
