@@ -2684,7 +2684,7 @@ def trigger_snapshot_tasks(
         ) from e
 
 
-@app.post("/admin/inventory/populate-images")
+@app.post("/internal/populate-inventory-images")
 def populate_inventory_images(
     db: Session = Depends(get_db),  # noqa: B008
 ) -> dict[str, Any]:
