@@ -413,23 +413,9 @@ def _generate_realistic_ad_spend(db, today: date, now: datetime) -> dict:
         WHERE tenant_id = :tid AND spend_date = :date
     """), {"tid": ONE8_TENANT_ID, "date": today})
     
-    if meta_exists and google_exists:
-        # Already seeded today, return existing values
-        existing_meta = db.scalar(text("""
-            SELECT SUM(spend_amount) FROM meta_ad_spends
-            WHERE tenant_id = :tid AND spend_date = :date
-        """), {"tid": ONE8_TENANT_ID, "date": today}) or 0
-        
-        existing_google = db.scalar(text("""
-            SELECT SUM(spend_amount) FROM google_ad_spends
-            WHERE tenant_id = :tid AND spend_date = :date
-        """), {"tid": ONE8_TENANT_ID, "date": today}) or 0
-        
-        return {
-            "records_created": 0,
-            "meta_spend": float(existing_meta),
-            "google_spend": float(existing_google),
-        }
+    # Don't check if today's spend exists - generate fresh ad spend every 6 hours
+    # This ensures continuous data flow for the demo simulator
+    # (Different from the backend seed, which only runs once at initialization)
     
     # Get connector IDs (reuse existing campaigns)
     meta_ref = db.execute(text("""
