@@ -12245,7 +12245,7 @@ def delete_role(
 )
 def get_top_products(
     tenant_id: uuid.UUID,
-    _auth: AdminSettingsDep,
+    _auth: ExecutiveViewDep,
     db: Session = Depends(get_db),  # noqa: B008
     period_start: date = Query(..., description="Start date (YYYY-MM-DD)"),  # noqa: B008
     period_end: date = Query(..., description="End date (YYYY-MM-DD)"),  # noqa: B008
@@ -12285,7 +12285,7 @@ def get_top_products(
 )
 def get_channel_breakdown(
     tenant_id: uuid.UUID,
-    _auth: AdminSettingsDep,
+    _auth: ExecutiveViewDep,
     db: Session = Depends(get_db),  # noqa: B008
     period_start: date = Query(..., description="Start date (YYYY-MM-DD)"),  # noqa: B008
     period_end: date = Query(..., description="End date (YYYY-MM-DD)"),  # noqa: B008
