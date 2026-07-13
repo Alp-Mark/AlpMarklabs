@@ -224,39 +224,9 @@ def get_channel_breakdown(
         channels_breakdown["google"]["revenue"] = google_revenue
         channels_breakdown["google"]["conversion_count"] = google_orders_count
 
-    # Marketing channel spends (influencer, email, tv_streaming, affiliate)
-    for channel_name in ["influencer", "email", "tv_streaming", "affiliate"]:
-        channel_stmt = select(
-            func.count().label("count"),
-            func.sum(MarketingChannelSpend.spend_amount).label(
-                "total_spend"
-            ),
-            func.sum(MarketingChannelSpend.conversions).label(
-                "total_conversions"
-            ),
-        ).where(
-            MarketingChannelSpend.tenant_id == tenant_id,
-            MarketingChannelSpend.channel_name == channel_name,
-            MarketingChannelSpend.spend_date >= period_start,
-            MarketingChannelSpend.spend_date <= period_end,
-        )
-
-        channel_result = db.execute(channel_stmt).first()
-        if channel_result and channel_result[1]:  # If there's spend
-            conversions = int(channel_result[2] or 0)
-            channels_breakdown[channel_name][
-                "conversion_count"
-            ] = conversions
-            channels_breakdown[channel_name]["order_count"] = conversions
-            # Allocate revenue proportionally to conversions
-            if conversions > 0 and all_orders:
-                allocated_revenue = (
-                    (conversions / max(1, total_orders))
-                    * sum(all_orders.values())
-                )
-                channels_breakdown[channel_name]["revenue"] = (
-                    allocated_revenue
-                )
+    # Note: Marketing channel spends (influencer, email, tv_streaming, affiliate)
+    # will be integrated in Steps 4-10 when MarketingChannelSpend model is available.
+    # For now, leave these channels with zero values.
 
     # Calculate organic = total - attributed
     attributed_orders = sum(
