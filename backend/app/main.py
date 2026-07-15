@@ -7726,10 +7726,13 @@ def get_activity_log(
     # Filter by persona visibility (if specified)
     if persona:
         # visible_to_personas NULL (all) or contains persona
+        # Use PostgreSQL JSON containment operator @>
         stmt = stmt.where(
             sa.or_(
                 AuditEvent.visible_to_personas.is_(None),
-                AuditEvent.visible_to_personas.contains([persona]),
+                AuditEvent.visible_to_personas.op('@>')(
+                    cast([persona], sa.JSON)
+                ),
             )
         )
 
