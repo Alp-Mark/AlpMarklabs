@@ -12,22 +12,33 @@ You won't need to run this again.
 import os
 import sys
 from datetime import date
-from sqlalchemy import create_engine, text
 
-# Must have DATABASE_URL from Railway
+# Setup path
+sys.path.insert(0, '/app/backend')
+sys.path.insert(0, '/app/worker')
+sys.path.insert(0, '/app')
+
+# Check DATABASE_URL
 DB_URL = os.getenv("DATABASE_URL")
 if not DB_URL:
     print("❌ DATABASE_URL not set.")
     print("   Run via: railway run python3 scripts/regenerate_today.py")
     sys.exit(1)
 
-# Import after DB_URL check
-from worker.app.tasks_demo_data import run_demo_data_generation
+print(f"Connecting to database: {DB_URL[:50]}...")
+
+# Now we can import
+from sqlalchemy import create_engine, text, pool
 
 TODAY = date(2026, 7, 13)
 TENANT_ID = "23165fa5-150b-4b6c-a637-b3dd24532c4d"
 
-engine = create_engine(DB_URL, pool_pre_ping=True, connect_args={"connect_timeout": 10})
+# Create engine with proper connection pooling
+engine = create_engine(
+    DB_URL, 
+    poolclass=pool.NullPool,  # No connection pooling for one-off script
+    connect_args={"connect_timeout": 10}
+)
 
 print(f"\n{'='*60}")
 print(f"🔄 Regenerating demo data for {TODAY}")
@@ -62,11 +73,14 @@ try:
             print(f"   (No records found to delete)")
 except Exception as e:
     print(f"❌ Cleanup failed: {e}")
+    import traceback
+    traceback.print_exc()
     sys.exit(1)
 
-# Step 2: Generate fresh data
+# Step 2: Generate fresh data via worker task
 print(f"\n🔄 Generating fresh demo data...\n")
 try:
+    from worker.app.tasks_demo_data import run_demo_data_generation
     result = run_demo_data_generation()
     
     print(f"✅ Demo data generated successfully!\n")

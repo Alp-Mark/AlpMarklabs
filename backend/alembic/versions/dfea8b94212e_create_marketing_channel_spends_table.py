@@ -9,8 +9,6 @@ Stub migration kept to maintain alembic history chain.
 """
 from __future__ import annotations
 
-from alembic import op
-
 # revision identifiers, used by Alembic.
 revision = 'dfea8b94212e'
 down_revision = 'ad8caf696011'

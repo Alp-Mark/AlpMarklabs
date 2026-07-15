@@ -10,6 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 def trigger_realistic_seed():
     """Trigger realistic One8 data seeding script."""
     script_path = Path(__file__).parent.parent / "scripts" / "seed_one8_realistic.py"

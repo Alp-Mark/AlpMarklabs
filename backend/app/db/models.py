@@ -77,6 +77,9 @@ class Tenant(Base):
         back_populates="tenant"
     )
     audit_events: Mapped[list[AuditEvent]] = relationship(back_populates="tenant")
+    system_health_events: Mapped[list[SystemHealthEvent]] = relationship(
+        back_populates="tenant"
+    )
     privacy_requests: Mapped[list[PrivacyRequest]] = relationship(
         back_populates="tenant"
     )
@@ -419,11 +422,60 @@ class AuditEvent(Base):
     details: Mapped[dict[str, object]] = mapped_column(
         JSON, nullable=False, default=dict
     )
+    # Activity log filtering fields (Phase 1)
+    severity: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="info"
+    )  # critical, important, info, debug
+    category: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="system"
+    )  # user_action, data_sync, alert, recommendation, system_health, etc.
+    is_system_generated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    visible_to_personas: Mapped[list[str] | None] = mapped_column(
+        JSON, nullable=True
+    )  # NULL = visible to all
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
     tenant: Mapped[Tenant] = relationship(back_populates="audit_events")
+
+
+class SystemHealthEvent(Base):
+    """
+    System health and failure tracking.
+    Records when services fail (syncs, APIs, connections) and when they recover.
+    Used to surface "What's broken right now?" prominently in activity logs.
+    """
+
+    __tablename__ = "system_health_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    service_name: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )  # e.g., "shopify_orders_sync", "meta_ads_api", "google_ads_api"
+    event_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # sync_failure, api_error, data_anomaly, connection_lost, rate_limit_exceeded
+    severity: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # critical, important, info, debug
+    error_message: Mapped[str] = mapped_column(Text, nullable=False)
+    error_details: Mapped[dict[str, object] | None] = mapped_column(
+        JSON, nullable=True
+    )  # Stack trace, API response, etc.
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )  # NULL = unresolved
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="system_health_events")
 
 
 class AdminAuditLog(Base):
