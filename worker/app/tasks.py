@@ -1237,6 +1237,10 @@ def run_shopify_order_sync_job(
                             "source": "shopify",
                             "orders_synced": len(orders),
                         },
+                        severity="debug",
+                        category="data_sync",
+                        is_system_generated=True,
+                        visible_to_personas=["brand_admin", "super_admin"],
                     )
                 )
             except Exception as exc:
@@ -1403,6 +1407,10 @@ def run_shopify_inventory_sync_job(
                             "source": "shopify",
                             "inventory_items_synced": len(items),
                         },
+                        severity="debug",
+                        category="data_sync",
+                        is_system_generated=True,
+                        visible_to_personas=["brand_admin", "super_admin"],
                     )
                 )
             except Exception as exc:

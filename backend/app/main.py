@@ -113,6 +113,12 @@ from backend.app.schemas.account import (
     UserResponse,
     UserSessionResponse,
 )
+from backend.app.schemas.activity_log import (
+    ActivityLogEntry,
+    ActivityLogResponse,
+    SystemHealthIssue,
+    SystemHealthResponse,
+)
 from backend.app.schemas.admin_audit import (
     AdminAuditLogListResponse,
     AdminAuditLogResponse,
@@ -148,12 +154,6 @@ from backend.app.schemas.alert_history import (
     AlertEventListResponse,
     AlertEventResponse,
     AlertHistoryResponse,
-)
-from backend.app.schemas.activity_log import (
-    ActivityLogEntry,
-    ActivityLogResponse,
-    SystemHealthIssue,
-    SystemHealthResponse,
 )
 from backend.app.schemas.analysis_view import (
     AnalysisViewShareListResponse,
@@ -1816,6 +1816,8 @@ def create_tenant(
         entity_id=str(tenant.id),
         details={"slug": tenant.slug},
         actor_user_id=creator.id,
+        severity="important",
+        category="user_action",
     )
     _seed_rule_thresholds(db, tenant.id, tenant.base_currency)
     db.commit()
@@ -1883,6 +1885,8 @@ def invite_user(
         entity_type="invitation",
         entity_id=str(invitation.id),
         details={"email": invitation.email, "role": invitation.role},
+        severity="important",
+        category="user_action",
     )
     db.commit()
     db.refresh(invitation)
@@ -2094,6 +2098,9 @@ def update_member_role(
         entity_id=str(membership.id),
         details={"new_role": membership.role, "email": user.email},
         actor_user_id=user.id,
+        severity="important",
+        category="security",
+        visible_to_personas=["executive_owner", "brand_admin", "super_admin"],
     )
     db.commit()
 
@@ -2131,6 +2138,8 @@ def deactivate_member(
         entity_id=str(user.id),
         details={"email": user.email, "role": membership.role},
         actor_user_id=user.id,
+        severity="important",
+        category="user_action",
     )
     db.commit()
 
@@ -2210,6 +2219,9 @@ def update_billing_and_seats(
             "billing_status": tenant.billing_status,
             "seat_limit": tenant.seat_limit,
         },
+        severity="important",
+        category="billing",
+        visible_to_personas=["executive_owner", "brand_admin", "super_admin"],
     )
     db.commit()
     db.refresh(tenant)
@@ -3179,6 +3191,9 @@ def update_tenant_status(
         entity_id=str(tenant_id),
         details={"is_active": payload.is_active, "reason": payload.reason},
         actor_user_id=actor.id if actor else None,
+        severity="important",
+        category="security",
+        visible_to_personas=["executive_owner", "brand_admin", "super_admin"],
     )
 
     # Write admin audit log
@@ -3300,6 +3315,9 @@ def delete_tenant(
         entity_id=str(tenant_id),
         details={"reason": reason},
         actor_user_id=actor.id if actor else None,
+        severity="critical",
+        category="security",
+        visible_to_personas=["executive_owner", "brand_admin", "super_admin"],
     )
     
     # Write admin audit log
@@ -12277,6 +12295,9 @@ def create_role(
         entity_type="role",
         entity_id=str(role.id),
         details={"name": role.name, "permissions": role.permissions},
+        severity="important",
+        category="security",
+        visible_to_personas=["executive_owner", "brand_admin", "super_admin"],
     )
     
     return RoleResponse(
@@ -12379,6 +12400,9 @@ def update_role(
         entity_type="role",
         entity_id=str(role.id),
         details={"name": role.name, "permissions": role.permissions},
+        severity="important",
+        category="security",
+        visible_to_personas=["executive_owner", "brand_admin", "super_admin"],
     )
     
     return RoleResponse(
@@ -12436,6 +12460,9 @@ def delete_role(
         entity_type="role",
         entity_id=str(role.id),
         details={"name": role.name},
+        severity="important",
+        category="security",
+        visible_to_personas=["executive_owner", "brand_admin", "super_admin"],
     )
     
     db.delete(role)
