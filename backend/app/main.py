@@ -13,6 +13,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, statu
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import cast, delete, func, select, text, update
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 
 from backend.app import (
@@ -7726,12 +7727,12 @@ def get_activity_log(
     # Filter by persona visibility (if specified)
     if persona:
         # visible_to_personas NULL (all) or contains persona
-        # Use PostgreSQL JSON containment operator @>
+        # Use PostgreSQL JSONB containment operator @> (requires jsonb cast)
         stmt = stmt.where(
             sa.or_(
                 AuditEvent.visible_to_personas.is_(None),
-                AuditEvent.visible_to_personas.op('@>')(
-                    cast([persona], sa.JSON)
+                cast(AuditEvent.visible_to_personas, postgresql.JSONB).op('@>')(
+                    cast([persona], postgresql.JSONB)
                 ),
             )
         )
