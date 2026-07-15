@@ -7505,7 +7505,7 @@ _ACTION_CATEGORY: dict[str, str] = {
     "alert.":          "Alert",
 }
 
-# Human-readable templates for known actions
+# Human-readable templates for known actions (Phase 4)
 _ACTION_MESSAGE: dict[str, str] = {
     "recommendation.status_changed":         "Recommendation {status}",
     "kpi.executive_snapshot_computed":       "Executive KPIs refreshed",
@@ -7524,20 +7524,68 @@ _ACTION_MESSAGE: dict[str, str] = {
     "cost_input.created":                    "Cost input added",
     "cost_input.updated":                    "Cost input updated",
     "cost_input.confirmed":                  "Cost input confirmed",
-    "user.invited":                          "Team member invited",
+    "cost_input.rejected":                   "Cost input rejected",
+    "user.invited":                          "Invited {email} as {role}",
     "account.activated":                     "Account activated",
     "tenant.created":                        "Tenant created",
+    "tenant.status_updated":                 "Tenant {status}",
+    "tenant.deleted":                        "Tenant deleted",
+    "member.role_updated":                   "Changed {email} role to {role}",
+    "member.deactivated":                    "Deactivated {email}",
+    "billing.updated":                       "Billing updated",
+    "role.create":                           "Created role: {name}",
+    "role.update":                           "Updated role: {name}",
+    "role.delete":                           "Deleted role: {name}",
     "delegation_rule.created":               "Approval authority delegated",
     "delegation_rule.revoked":               "Delegation revoked",
 }
 
 
 def _fmt_message(action: str, details: dict) -> str:
+    """Format human-readable message with context from details (Phase 4)."""
     fallback = action.replace(".", " ").replace("_", " ").title()
     tmpl = _ACTION_MESSAGE.get(action, fallback)
+    
+    # Recommendation status
     if action == "recommendation.status_changed":
         to_s = details.get("to_status", "")
         tmpl = tmpl.replace("{status}", str(to_s).replace("_", " ").title())
+    
+    # User invitations
+    elif action == "user.invited":
+        email = details.get("email", "")
+        role = details.get("role", "").replace("_", " ").title()
+        tmpl = tmpl.replace("{email}", email).replace("{role}", role)
+    
+    # Role changes
+    elif action == "member.role_updated":
+        email = details.get("email", "")
+        new_role = details.get("new_role", "").replace("_", " ").title()
+        tmpl = tmpl.replace("{email}", email).replace("{role}", new_role)
+    
+    # Deactivations
+    elif action == "member.deactivated":
+        email = details.get("email", "")
+        tmpl = tmpl.replace("{email}", email)
+    
+    # Tenant status
+    elif action == "tenant.status_updated":
+        is_active = details.get("is_active")
+        status = "activated" if is_active else "suspended"
+        tmpl = tmpl.replace("{status}", status)
+    
+    # Role management
+    elif action in ("role.create", "role.update", "role.delete"):
+        name = details.get("name", "")
+        tmpl = tmpl.replace("{name}", name)
+    
+    # Billing updates
+    elif action == "billing.updated":
+        plan = details.get("billing_plan", "")
+        cycle = details.get("billing_cycle", "")
+        if plan and cycle:
+            tmpl = f"Updated billing to {plan} ({cycle})"
+    
     return tmpl
 
 
@@ -7546,6 +7594,84 @@ def _action_category(action: str) -> str:
         if action.startswith(prefix):
             return cat
     return "System"
+
+
+def _aggregate_repetitive_events(
+    events: list[AuditEvent],
+) -> list[ActivityLogEntry | dict[str, object]]:
+    """
+    Aggregate repetitive events (>5 occurrences in 24h) into summary entries.
+    
+    Phase 4 logic:
+    - Group by (action, entity_type, entity_id, severity)
+    - Only aggregate if severity='debug' or 'info' (skip critical/important)
+    - If count >5 → return aggregated entry
+    - Otherwise → return individual entries
+    
+    Returns mixed list of ActivityLogEntry and dict (aggregated summary).
+    """
+    from collections import defaultdict
+    from datetime import timedelta
+    
+    # Group events by key
+    groups: dict[tuple[str, str, str, str], list[AuditEvent]] = defaultdict(list)
+    for evt in events:
+        # Only aggregate low-severity events
+        if evt.severity in ("debug", "info"):
+            key = (evt.action, evt.entity_type, evt.entity_id, evt.severity)
+            groups[key].append(evt)
+    
+    # Determine which groups to aggregate (>5 events)
+    aggregated_keys = {k for k, v in groups.items() if len(v) > 5}
+    
+    # Build result
+    result: list[ActivityLogEntry | dict[str, object]] = []
+    processed = set()
+    
+    for evt in events:
+        key = (evt.action, evt.entity_type, evt.entity_id, evt.severity)
+        
+        # If this event belongs to an aggregated group and we haven't processed it yet
+        if key in aggregated_keys and key not in processed:
+            group = groups[key]
+            count = len(group)
+            latest = max(group, key=lambda e: e.created_at)
+            
+            # Time since last occurrence
+            now = datetime.now(UTC)
+            delta = now - latest.created_at
+            if delta < timedelta(minutes=60):
+                time_ago = f"{int(delta.total_seconds() // 60)}m ago"
+            elif delta < timedelta(hours=24):
+                time_ago = f"{int(delta.total_seconds() // 3600)}h ago"
+            else:
+                time_ago = f"{int(delta.total_seconds() // 86400)}d ago"
+            
+            # Create aggregated summary
+            base_msg = _fmt_message(evt.action, evt.details or {})
+            result.append({
+                "id": f"aggregated_{evt.action}_{evt.entity_id}",
+                "timestamp": latest.created_at,
+                "severity": evt.severity,
+                "category": evt.category,
+                "action": evt.action,
+                "description": f"{base_msg} ({count} times, last: {time_ago})",
+                "actor": "System",
+                "actor_user_id": None,
+                "entity_type": evt.entity_type,
+                "entity_id": evt.entity_id,
+                "details": {"aggregated_count": count, "latest_at": latest.created_at.isoformat()},
+                "is_system_generated": True,
+                "aggregated": True,
+            })
+            processed.add(key)
+        
+        # Not aggregated (either critical/important, or singleton)
+        elif key not in aggregated_keys:
+            # Will be converted to ActivityLogEntry later
+            result.append(evt)
+    
+    return result
 
 
 @app.get("/tenants/{tenant_id}/activity-log")
@@ -7617,8 +7743,14 @@ def get_activity_log(
         stmt.offset((page - 1) * page_size).limit(page_size)
     ))
 
+    # Phase 4: Aggregate repetitive events (>5 occurrences)
+    aggregated_items = _aggregate_repetitive_events(rows)
+
     # Enrich with actor names
-    actor_ids = {r.actor_user_id for r in rows if r.actor_user_id}
+    actor_ids = {
+        r.actor_user_id for r in aggregated_items 
+        if isinstance(r, AuditEvent) and r.actor_user_id
+    }
     actors: dict[uuid.UUID, str] = {}
     if actor_ids:
         users = db.scalars(select(User).where(User.id.in_(actor_ids)))
@@ -7626,24 +7758,30 @@ def get_activity_log(
             name = u.full_name or u.email
             actors[u.id] = name
 
-    # Build response entries
-    entries = [
-        ActivityLogEntry(
-            id=str(r.id),
-            timestamp=r.created_at,
-            severity=r.severity,  # type: ignore[arg-type]
-            category=r.category,
-            action=r.action,
-            description=_fmt_message(r.action, r.details or {}),
-            actor=actors.get(r.actor_user_id) if r.actor_user_id else "System",
-            actor_user_id=str(r.actor_user_id) if r.actor_user_id else None,
-            entity_type=r.entity_type,
-            entity_id=r.entity_id,
-            details=r.details or {},
-            is_system_generated=r.is_system_generated,
-        )
-        for r in rows
-    ]
+    # Build response entries (handle both AuditEvent and aggregated dicts)
+    entries = []
+    for item in aggregated_items:
+        if isinstance(item, dict):
+            # Already formatted aggregated summary
+            entries.append(ActivityLogEntry(**item))  # type: ignore[arg-type]
+        else:
+            # Regular AuditEvent
+            entries.append(
+                ActivityLogEntry(
+                    id=str(item.id),
+                    timestamp=item.created_at,
+                    severity=item.severity,  # type: ignore[arg-type]
+                    category=item.category,
+                    action=item.action,
+                    description=_fmt_message(item.action, item.details or {}),
+                    actor=actors.get(item.actor_user_id) if item.actor_user_id else "System",
+                    actor_user_id=str(item.actor_user_id) if item.actor_user_id else None,
+                    entity_type=item.entity_type,
+                    entity_id=item.entity_id,
+                    details=item.details or {},
+                    is_system_generated=item.is_system_generated,
+                )
+            )
 
     return ActivityLogResponse(
         entries=entries,

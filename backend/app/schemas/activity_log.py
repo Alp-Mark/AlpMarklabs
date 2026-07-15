@@ -23,6 +23,7 @@ class ActivityLogEntry(BaseModel):
     entity_id: str
     details: dict[str, object]
     is_system_generated: bool
+    aggregated: bool = False  # Phase 4: True if this is an aggregated summary
 
     class Config:
         from_attributes = True
