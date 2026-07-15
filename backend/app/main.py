@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import cast, delete, func, select, text, update
 from sqlalchemy.orm import Session
 
 from backend.app import (
@@ -7712,12 +7712,12 @@ def get_activity_log(
     # Filter by severity (if specified)
     if severity:
         severity_list = [s.strip() for s in severity.split(",")]
-        stmt = stmt.where(AuditEvent.severity.in_(severity_list))
+        stmt = stmt.where(cast(AuditEvent.severity, sa.Text).in_(severity_list))
 
     # Filter by category (if specified)
     if category:
         category_list = [c.strip() for c in category.split(",")]
-        stmt = stmt.where(AuditEvent.category.in_(category_list))
+        stmt = stmt.where(cast(AuditEvent.category, sa.Text).in_(category_list))
 
     # Exclude system-generated events by default (hides sync spam)
     if not include_system:
