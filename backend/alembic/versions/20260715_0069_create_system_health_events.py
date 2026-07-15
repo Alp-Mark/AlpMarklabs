@@ -19,28 +19,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Create ENUM type for event_type
-    event_type_enum = sa.Enum(
-        "sync_failure",
-        "api_error",
-        "data_anomaly",
-        "connection_lost",
-        "rate_limit_exceeded",
-        name="system_health_event_type",
-        create_type=True,
+    # Create ENUM types
+    op.execute(
+        "CREATE TYPE system_health_event_type AS ENUM "
+        "('sync_failure', 'api_error', 'data_anomaly', 'connection_lost', 'rate_limit_exceeded')"
     )
-    event_type_enum.create(op.get_bind(), checkfirst=True)
-
-    # Create ENUM type for severity (reuse same values as audit_events)
-    severity_enum = sa.Enum(
-        "critical",
-        "important",
-        "info",
-        "debug",
-        name="system_health_severity",
-        create_type=True,
+    op.execute(
+        "CREATE TYPE system_health_severity AS ENUM "
+        "('critical', 'important', 'info', 'debug')"
     )
-    severity_enum.create(op.get_bind(), checkfirst=True)
 
     # Create system_health_events table
     op.create_table(
@@ -57,13 +44,16 @@ def upgrade() -> None:
                 "connection_lost",
                 "rate_limit_exceeded",
                 name="system_health_event_type",
+                create_type=False
             ),
             nullable=False,
         ),
         sa.Column(
             "severity",
             sa.Enum(
-                "critical", "important", "info", "debug", name="system_health_severity"
+                "critical", "important", "info", "debug", 
+                name="system_health_severity",
+                create_type=False
             ),
             nullable=False,
         ),
@@ -110,5 +100,5 @@ def downgrade() -> None:
     op.drop_table("system_health_events")
 
     # Drop ENUM types
-    sa.Enum(name="system_health_severity").drop(op.get_bind(), checkfirst=True)
-    sa.Enum(name="system_health_event_type").drop(op.get_bind(), checkfirst=True)
+    op.execute("DROP TYPE system_health_severity")
+    op.execute("DROP TYPE system_health_event_type")

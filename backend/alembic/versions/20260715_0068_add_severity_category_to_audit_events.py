@@ -20,15 +20,10 @@ depends_on = None
 
 def upgrade() -> None:
     # Create ENUM type for severity
-    severity_enum = sa.Enum(
-        "critical",
-        "important",
-        "info",
-        "debug",
-        name="audit_event_severity",
-        create_type=True,
+    op.execute(
+        "CREATE TYPE audit_event_severity AS ENUM "
+        "('critical', 'important', 'info', 'debug')"
     )
-    severity_enum.create(op.get_bind(), checkfirst=True)
 
     # Add severity column (defaults to 'info' for existing records)
     op.add_column(
@@ -36,7 +31,9 @@ def upgrade() -> None:
         sa.Column(
             "severity",
             sa.Enum(
-                "critical", "important", "info", "debug", name="audit_event_severity"
+                "critical", "important", "info", "debug", 
+                name="audit_event_severity",
+                create_type=False
             ),
             nullable=False,
             server_default="info",
@@ -146,4 +143,4 @@ def downgrade() -> None:
     op.drop_column("audit_events", "severity")
 
     # Drop ENUM type
-    sa.Enum(name="audit_event_severity").drop(op.get_bind(), checkfirst=True)
+    op.execute("DROP TYPE audit_event_severity")
