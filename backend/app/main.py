@@ -68,6 +68,7 @@ from backend.app.db.models import (
     Simulation,
     SubscriptionPlan,
     SupportTicket,
+    SystemHealthEvent,
     Tenant,
     TenantFeatureFlag,
     TenantMembership,
@@ -147,6 +148,12 @@ from backend.app.schemas.alert_history import (
     AlertEventListResponse,
     AlertEventResponse,
     AlertHistoryResponse,
+)
+from backend.app.schemas.activity_log import (
+    ActivityLogEntry,
+    ActivityLogResponse,
+    SystemHealthIssue,
+    SystemHealthResponse,
 )
 from backend.app.schemas.analysis_view import (
     AnalysisViewShareListResponse,
@@ -7529,16 +7536,28 @@ def get_activity_log(
     auth: IntelRecommendationsViewDep,
     db: Session = Depends(get_db),  # noqa: B008
     persona: str | None = None,
-    page: int = 1,
-    page_size: int = 50,
-) -> dict[str, Any]:
+    severity: str | None = Query(
+        None, description="Comma-separated: critical,important,info,debug"
+    ),
+    category: str | None = Query(
+        None, description="Comma-separated: user_action,data_sync,alert"
+    ),
+    include_system: bool = Query(
+        False, description="Include system-generated events"
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+) -> ActivityLogResponse:
     """
-    Per-persona activity log.
+    Activity log with severity/category filtering and persona visibility.
 
-    Returns audit events filtered to the actions relevant for the given persona.
-    If persona is not specified, all tenant-level events are returned.
+    **New filtering (Phase 2):**
+    - severity: Filter by critical, important, info, debug (default: all)
+    - category: Filter by category (user_action, data_sync, alert, etc.)
+    - include_system: Include system-generated events (default: false)
+    - persona: Filter to events visible to persona (executive, etc.)
 
-    persona options: executive | growth | finance | operations | retention
+    **Default behavior:** Shows all severity, excludes system-generated.
     """
     stmt = (
         select(AuditEvent)
@@ -7546,14 +7565,36 @@ def get_activity_log(
         .order_by(AuditEvent.created_at.desc())
     )
 
-    if persona and persona in _PERSONA_ACTIONS:
-        allowed = _PERSONA_ACTIONS[persona]
-        stmt = stmt.where(AuditEvent.action.in_(allowed))
+    # Filter by severity (if specified)
+    if severity:
+        severity_list = [s.strip() for s in severity.split(",")]
+        stmt = stmt.where(AuditEvent.severity.in_(severity_list))
 
+    # Filter by category (if specified)
+    if category:
+        category_list = [c.strip() for c in category.split(",")]
+        stmt = stmt.where(AuditEvent.category.in_(category_list))
+
+    # Exclude system-generated events by default (hides sync spam)
+    if not include_system:
+        stmt = stmt.where(AuditEvent.is_system_generated == False)  # noqa: E712
+
+    # Filter by persona visibility (if specified)
+    if persona:
+        # visible_to_personas NULL (all) or contains persona
+        stmt = stmt.where(
+            sa.or_(
+                AuditEvent.visible_to_personas.is_(None),
+                AuditEvent.visible_to_personas.contains([persona]),
+            )
+        )
+
+    # Get total count
     total = db.scalar(
         select(func.count()).select_from(stmt.subquery())
     ) or 0
 
+    # Paginate
     rows = list(db.scalars(
         stmt.offset((page - 1) * page_size).limit(page_size)
     ))
@@ -7564,31 +7605,106 @@ def get_activity_log(
     if actor_ids:
         users = db.scalars(select(User).where(User.id.in_(actor_ids)))
         for u in users:
-            name = f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email
+            name = u.full_name or u.email
             actors[u.id] = name
 
-    items = [
-        {
-            "id":          str(r.id),
-            "timestamp":   r.created_at.isoformat(),
-            "actor_name":  actors.get(r.actor_user_id, "System") if r.actor_user_id else "System",
-            "category":    _action_category(r.action),
-            "action":      r.action,
-            "message":     _fmt_message(r.action, r.details or {}),
-            "entity_type": r.entity_type,
-            "entity_id":   r.entity_id,
-            "details":     r.details,
-        }
+    # Build response entries
+    entries = [
+        ActivityLogEntry(
+            id=str(r.id),
+            timestamp=r.created_at,
+            severity=r.severity,  # type: ignore[arg-type]
+            category=r.category,
+            action=r.action,
+            description=_fmt_message(r.action, r.details or {}),
+            actor=actors.get(r.actor_user_id) if r.actor_user_id else "System",
+            actor_user_id=str(r.actor_user_id) if r.actor_user_id else None,
+            entity_type=r.entity_type,
+            entity_id=r.entity_id,
+            details=r.details or {},
+            is_system_generated=r.is_system_generated,
+        )
         for r in rows
     ]
 
-    return {
-        "items":     items,
-        "total":     total,
-        "page":      page,
-        "page_size": page_size,
-        "persona":   persona,
-    }
+    return ActivityLogResponse(
+        entries=entries,
+        total_count=total,
+        page=page,
+        page_size=page_size,
+        filters_applied={
+            "persona": persona,
+            "severity": severity,
+            "category": category,
+            "include_system": include_system,
+        },
+    )
+
+
+@app.get("/tenants/{tenant_id}/system-health")
+def get_system_health(
+    tenant_id: uuid.UUID,
+    auth: IntelRecommendationsViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    resolved: bool = Query(False, description="Include resolved issues"),
+) -> SystemHealthResponse:
+    """
+    Get active system health issues (sync failures, API errors, etc.).
+
+    **Default behavior:** Shows only unresolved issues (resolved_at IS NULL).
+    Use `resolved=true` to include resolved issues.
+    """
+    stmt = (
+        select(SystemHealthEvent)
+        .where(SystemHealthEvent.tenant_id == tenant_id)
+        .order_by(SystemHealthEvent.created_at.desc())
+    )
+
+    # Filter by resolved status
+    if not resolved:
+        stmt = stmt.where(SystemHealthEvent.resolved_at.is_(None))
+
+    rows = list(db.scalars(stmt))
+
+    # Build response issues
+    issues = []
+    for r in rows:
+        # Calculate time since failure
+        time_delta = datetime.now(UTC) - r.created_at
+        hours = int(time_delta.total_seconds() // 3600)
+        minutes = int((time_delta.total_seconds() % 3600) // 60)
+        
+        if hours > 0:
+            time_since = f"{hours}h {minutes}m"
+        else:
+            time_since = f"{minutes}m"
+
+        issues.append(
+            SystemHealthIssue(
+                id=str(r.id),
+                service_name=r.service_name,
+                event_type=r.event_type,
+                severity=r.severity,  # type: ignore[arg-type]
+                error_message=r.error_message,
+                error_details=r.error_details,
+                created_at=r.created_at,
+                time_since_failure=time_since,
+            )
+        )
+
+    total_unresolved = db.scalar(
+        select(func.count())
+        .select_from(SystemHealthEvent)
+        .where(
+            SystemHealthEvent.tenant_id == tenant_id,
+            SystemHealthEvent.resolved_at.is_(None),
+        )
+    ) or 0
+
+    return SystemHealthResponse(
+        issues=issues,
+        total_unresolved=total_unresolved,
+    )
 
 
 @app.get("/tenants/{tenant_id}/members")
