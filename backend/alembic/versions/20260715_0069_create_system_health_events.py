@@ -8,6 +8,7 @@ Create Date: 2026-07-15
 from __future__ import annotations
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -19,14 +20,25 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Create ENUM types
+    # Create ENUM types (idempotent — survives partial prior runs)
     op.execute(
-        "CREATE TYPE system_health_event_type AS ENUM "
-        "('sync_failure', 'api_error', 'data_anomaly', 'connection_lost', 'rate_limit_exceeded')"
+        """
+        DO $$ BEGIN
+            CREATE TYPE system_health_event_type AS ENUM
+                ('sync_failure', 'api_error', 'data_anomaly',
+                 'connection_lost', 'rate_limit_exceeded');
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+        """
     )
     op.execute(
-        "CREATE TYPE system_health_severity AS ENUM "
-        "('critical', 'important', 'info', 'debug')"
+        """
+        DO $$ BEGIN
+            CREATE TYPE system_health_severity AS ENUM
+                ('critical', 'important', 'info', 'debug');
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+        """
     )
 
     # Create system_health_events table
@@ -37,23 +49,23 @@ def upgrade() -> None:
         sa.Column("service_name", sa.String(length=100), nullable=False),
         sa.Column(
             "event_type",
-            sa.Enum(
+            postgresql.ENUM(
                 "sync_failure",
                 "api_error",
                 "data_anomaly",
                 "connection_lost",
                 "rate_limit_exceeded",
                 name="system_health_event_type",
-                create_type=False
+                create_type=False,
             ),
             nullable=False,
         ),
         sa.Column(
             "severity",
-            sa.Enum(
-                "critical", "important", "info", "debug", 
+            postgresql.ENUM(
+                "critical", "important", "info", "debug",
                 name="system_health_severity",
-                create_type=False
+                create_type=False,
             ),
             nullable=False,
         ),
