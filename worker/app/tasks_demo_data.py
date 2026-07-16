@@ -532,25 +532,26 @@ def _update_inventory_snapshots(db) -> bool:
     """Update inventory items with realistic stock levels and COGS."""
     
     # One8 Product Catalog with realistic COGS (42% of retail)
+    # (sku, product_title, variant, retail_price, cogs, reorder_point, image_url)
     PRODUCTS_WITH_COGS = [
-        ("ONE8-TEE-001", "One8 Signature T-Shirt", "Black", 1299.0, 545.0, 50),
-        ("ONE8-TEE-002", "One8 Signature T-Shirt", "White", 1299.0, 545.0, 50),
-        ("ONE8-TEE-003", "One8 Signature T-Shirt", "Navy", 1299.0, 545.0, 40),
-        ("ONE8-POLO-001", "One8 Polo Shirt", "Blue", 1899.0, 798.0, 30),
-        ("ONE8-POLO-002", "One8 Polo Shirt", "Grey", 1899.0, 798.0, 30),
-        ("ONE8-SHOE-001", "One8 Running Shoes", "Black/Red", 4999.0, 2100.0, 20),
-        ("ONE8-SHOE-002", "One8 Running Shoes", "White/Blue", 4999.0, 2100.0, 20),
-        ("ONE8-SHOE-003", "One8 Sneakers", "Grey", 3999.0, 1680.0, 25),
-        ("ONE8-TRACK-001", "One8 Track Pants", "Black", 2299.0, 966.0, 35),
-        ("ONE8-TRACK-002", "One8 Track Pants", "Navy", 2299.0, 966.0, 35),
-        ("ONE8-SHORT-001", "One8 Shorts", "Black", 1499.0, 630.0, 40),
-        ("ONE8-SHORT-002", "One8 Shorts", "Grey", 1499.0, 630.0, 40),
-        ("ONE8-JACKET-001", "One8 Jacket", "Black", 3499.0, 1470.0, 20),
-        ("ONE8-JACKET-002", "One8 Jacket", "Navy", 3499.0, 1470.0, 20),
-        ("ONE8-CAP-001", "One8 Cap", "Black", 799.0, 336.0, 60),
-        ("ONE8-CAP-002", "One8 Cap", "White", 799.0, 336.0, 60),
-        ("ONE8-SOCK-001", "One8 Socks (3-Pack)", "Mixed", 599.0, 252.0, 80),
-        ("ONE8-HOODIE-001", "One8 Hoodie", "Grey", 2999.0, 1260.0, 25),
+        ("ONE8-TEE-001", "One8 Signature T-Shirt", "Black", 1299.0, 545.0, 50, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-tee-black.jpg"),
+        ("ONE8-TEE-002", "One8 Signature T-Shirt", "White", 1299.0, 545.0, 50, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-tee-white.jpg"),
+        ("ONE8-TEE-003", "One8 Signature T-Shirt", "Navy", 1299.0, 545.0, 40, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-tee-navy.jpg"),
+        ("ONE8-POLO-001", "One8 Polo Shirt", "Blue", 1899.0, 798.0, 30, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-polo-blue.jpg"),
+        ("ONE8-POLO-002", "One8 Polo Shirt", "Grey", 1899.0, 798.0, 30, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-polo-grey.jpg"),
+        ("ONE8-SHOE-001", "One8 Running Shoes", "Black/Red", 4999.0, 2100.0, 20, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-shoe-blackred.jpg"),
+        ("ONE8-SHOE-002", "One8 Running Shoes", "White/Blue", 4999.0, 2100.0, 20, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-shoe-whiteblue.jpg"),
+        ("ONE8-SHOE-003", "One8 Sneakers", "Grey", 3999.0, 1680.0, 25, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-sneaker-grey.jpg"),
+        ("ONE8-TRACK-001", "One8 Track Pants", "Black", 2299.0, 966.0, 35, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-track-black.jpg"),
+        ("ONE8-TRACK-002", "One8 Track Pants", "Navy", 2299.0, 966.0, 35, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-track-navy.jpg"),
+        ("ONE8-SHORT-001", "One8 Shorts", "Black", 1499.0, 630.0, 40, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-shorts-black.jpg"),
+        ("ONE8-SHORT-002", "One8 Shorts", "Grey", 1499.0, 630.0, 40, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-shorts-grey.jpg"),
+        ("ONE8-JACKET-001", "One8 Jacket", "Black", 3499.0, 1470.0, 20, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-jacket-black.jpg"),
+        ("ONE8-JACKET-002", "One8 Jacket", "Navy", 3499.0, 1470.0, 20, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-jacket-navy.jpg"),
+        ("ONE8-CAP-001", "One8 Cap", "Black", 799.0, 336.0, 60, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-cap-black.jpg"),
+        ("ONE8-CAP-002", "One8 Cap", "White", 799.0, 336.0, 60, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-cap-white.jpg"),
+        ("ONE8-SOCK-001", "One8 Socks (3-Pack)", "Mixed", 599.0, 252.0, 80, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-socks-mixed.jpg"),
+        ("ONE8-HOODIE-001", "One8 Hoodie", "Grey", 2999.0, 1260.0, 25, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-hoodie-grey.jpg"),
     ]
     
     # Get real connector ID from existing inventory
@@ -562,7 +563,7 @@ def _update_inventory_snapshots(db) -> bool:
     if not ONE8_CONNECTOR_ID:
         return True  # Skip if no connector
     
-    for sku, product_title, variant, _retail_price, cogs, reorder_point in (
+    for sku, product_title, variant, _retail_price, cogs, reorder_point, image_url in (
         PRODUCTS_WITH_COGS
     ):
         # Check if inventory item exists
@@ -584,6 +585,7 @@ def _update_inventory_snapshots(db) -> bool:
                 SET available_quantity = GREATEST(available_quantity + :change, 0),
                     cost_per_unit = :cogs,
                     reorder_point = :reorder,
+                    image_url = :image_url,
                     synced_at = :now,
                     updated_at = :now
                 WHERE id = :id
@@ -591,6 +593,7 @@ def _update_inventory_snapshots(db) -> bool:
                 "change": change,
                 "cogs": cogs,
                 "reorder": reorder_point,
+                "image_url": image_url,
                 "now": datetime.now(UTC),
                 "id": exists
             })
@@ -600,11 +603,11 @@ def _update_inventory_snapshots(db) -> bool:
                 INSERT INTO shopify_inventory_items (
                     id, tenant_id, connector_id, external_inventory_item_id,
                     sku, product_title, variant_title, available_quantity,
-                    cost_per_unit, reorder_point, synced_at, created_at, updated_at
+                    cost_per_unit, reorder_point, image_url, synced_at, created_at, updated_at
                 ) VALUES (
                     :id, :tenant_id, :connector_id, :external_id,
                     :sku, :product_title, :variant_title, :quantity,
-                    :cogs, :reorder, :now, :now, :now
+                    :cogs, :reorder, :image_url, :now, :now, :now
                 )
             """), {
                 "id": str(uuid.uuid4()),
@@ -617,6 +620,7 @@ def _update_inventory_snapshots(db) -> bool:
                 "quantity": 100,
                 "cogs": cogs,
                 "reorder": reorder_point,
+                "image_url": image_url,
                 "now": datetime.now(UTC),
             })
     
