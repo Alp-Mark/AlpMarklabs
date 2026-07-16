@@ -321,7 +321,7 @@ def get_product_variants(
             ShopifyOrderLineItem.quantity * ShopifyOrderLineItem.unit_price
         ).label("total_revenue"),
         func.avg(ShopifyOrderLineItem.unit_price).label("avg_unit_price"),
-        ShopifyInventoryItem.image_url,
+        func.max(ShopifyInventoryItem.image_url).label("image_url"),
     ).outerjoin(
         ShopifyInventoryItem,
         (ShopifyOrderLineItem.sku == ShopifyInventoryItem.sku)
@@ -335,7 +335,6 @@ def get_product_variants(
         ShopifyOrderLineItem.sku,
         ShopifyOrderLineItem.variant_title,
         ShopifyOrderLineItem.unit_price,
-        ShopifyInventoryItem.image_url,
     ).order_by(
         func.sum(
             ShopifyOrderLineItem.quantity * ShopifyOrderLineItem.unit_price
