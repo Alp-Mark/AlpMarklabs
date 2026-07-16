@@ -533,25 +533,26 @@ def _update_inventory_snapshots(db) -> bool:
     
     # One8 Product Catalog with realistic COGS (42% of retail)
     # (sku, product_title, variant, retail_price, cogs, reorder_point, image_url)
+    # image_url: real verified URLs from one8_products.json CDN
     PRODUCTS_WITH_COGS = [
-        ("ONE8-TEE-001", "One8 Signature T-Shirt", "Black", 1299.0, 545.0, 50, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-tee-black.jpg"),
-        ("ONE8-TEE-002", "One8 Signature T-Shirt", "White", 1299.0, 545.0, 50, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-tee-white.jpg"),
-        ("ONE8-TEE-003", "One8 Signature T-Shirt", "Navy", 1299.0, 545.0, 40, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-tee-navy.jpg"),
-        ("ONE8-POLO-001", "One8 Polo Shirt", "Blue", 1899.0, 798.0, 30, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-polo-blue.jpg"),
-        ("ONE8-POLO-002", "One8 Polo Shirt", "Grey", 1899.0, 798.0, 30, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-polo-grey.jpg"),
-        ("ONE8-SHOE-001", "One8 Running Shoes", "Black/Red", 4999.0, 2100.0, 20, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-shoe-blackred.jpg"),
-        ("ONE8-SHOE-002", "One8 Running Shoes", "White/Blue", 4999.0, 2100.0, 20, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-shoe-whiteblue.jpg"),
-        ("ONE8-SHOE-003", "One8 Sneakers", "Grey", 3999.0, 1680.0, 25, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-sneaker-grey.jpg"),
-        ("ONE8-TRACK-001", "One8 Track Pants", "Black", 2299.0, 966.0, 35, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-track-black.jpg"),
-        ("ONE8-TRACK-002", "One8 Track Pants", "Navy", 2299.0, 966.0, 35, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-track-navy.jpg"),
-        ("ONE8-SHORT-001", "One8 Shorts", "Black", 1499.0, 630.0, 40, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-shorts-black.jpg"),
-        ("ONE8-SHORT-002", "One8 Shorts", "Grey", 1499.0, 630.0, 40, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-shorts-grey.jpg"),
-        ("ONE8-JACKET-001", "One8 Jacket", "Black", 3499.0, 1470.0, 20, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-jacket-black.jpg"),
-        ("ONE8-JACKET-002", "One8 Jacket", "Navy", 3499.0, 1470.0, 20, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-jacket-navy.jpg"),
-        ("ONE8-CAP-001", "One8 Cap", "Black", 799.0, 336.0, 60, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-cap-black.jpg"),
-        ("ONE8-CAP-002", "One8 Cap", "White", 799.0, 336.0, 60, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-cap-white.jpg"),
-        ("ONE8-SOCK-001", "One8 Socks (3-Pack)", "Mixed", 599.0, 252.0, 80, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-socks-mixed.jpg"),
-        ("ONE8-HOODIE-001", "One8 Hoodie", "Grey", 2999.0, 1260.0, 25, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/one8-hoodie-grey.jpg"),
+        ("ONE8-TEE-001", "One8 Signature T-Shirt", "Black", 1299.0, 545.0, 50, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/1-copy.jpg?v=1781874432"),
+        ("ONE8-TEE-002", "One8 Signature T-Shirt", "White", 1299.0, 545.0, 50, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/1copy_4ebb53f6-004b-4f25-9342-f040f59c1ba8.jpg?v=1781874356"),
+        ("ONE8-TEE-003", "One8 Signature T-Shirt", "Navy", 1299.0, 545.0, 40, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/1-copy.jpg?v=1781874432"),
+        ("ONE8-POLO-001", "One8 Polo Shirt", "Blue", 1899.0, 798.0, 30, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/V22000901_01.jpg?v=1781425700"),
+        ("ONE8-POLO-002", "One8 Polo Shirt", "Grey", 1899.0, 798.0, 30, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/1_84768696-dc76-4ed2-8aaa-66b1e2de6679.jpg?v=1781985199"),
+        ("ONE8-SHOE-001", "One8 Running Shoes", "Black/Red", 4999.0, 2100.0, 20, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/V10032402_02_756f038f-3639-4cd3-9cf9-45eb76905d92.jpg?v=1781859656"),
+        ("ONE8-SHOE-002", "One8 Running Shoes", "White/Blue", 4999.0, 2100.0, 20, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/V10015001_03_6d97ac06-93e4-46c0-b7ee-12a9ae14bd22.jpg?v=1781597662"),
+        ("ONE8-SHOE-003", "One8 Sneakers", "Grey", 3999.0, 1680.0, 25, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/V10015401_03.jpg?v=1781959016"),
+        ("ONE8-TRACK-001", "One8 Track Pants", "Black", 2299.0, 966.0, 35, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/1_577715d4-9ece-498f-aaf0-103a0e7f4886.jpg?v=1781868512"),
+        ("ONE8-TRACK-002", "One8 Track Pants", "Navy", 2299.0, 966.0, 35, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/1_9bf49dff-95a5-4e14-85b2-86e52c7deaa4.jpg?v=1781994618"),
+        ("ONE8-SHORT-001", "One8 Shorts", "Black", 1499.0, 630.0, 40, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/2_7d5037d2-58b2-496f-9f3c-870836c46c6a.jpg?v=1781876268"),
+        ("ONE8-SHORT-002", "One8 Shorts", "Grey", 1499.0, 630.0, 40, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/1_dc3beb8b-ee20-4ae6-8eb5-b7fb567b0e2d.jpg?v=1781988968"),
+        ("ONE8-JACKET-001", "One8 Jacket", "Black", 3499.0, 1470.0, 20, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/V24000501_01.jpg?v=1781875446"),
+        ("ONE8-JACKET-002", "One8 Jacket", "Navy", 3499.0, 1470.0, 20, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/V24000502_01.jpg?v=1781875497"),
+        ("ONE8-CAP-001", "One8 Cap", "Black", 799.0, 336.0, 60, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/V31001001_01_f2126a31-d5d5-4504-a797-0278343a8c81.jpg?v=1782142874"),
+        ("ONE8-CAP-002", "One8 Cap", "White", 799.0, 336.0, 60, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/V31000603_01.jpg?v=1781432152"),
+        ("ONE8-SOCK-001", "One8 Socks (3-Pack)", "Mixed", 599.0, 252.0, 80, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/V31001001_01_f2126a31-d5d5-4504-a797-0278343a8c81.jpg?v=1782142874"),
+        ("ONE8-HOODIE-001", "One8 Hoodie", "Grey", 2999.0, 1260.0, 25, "https://cdn.shopify.com/s/files/1/0692/3514/6912/files/V24000501_01.jpg?v=1781875446"),
     ]
     
     # Get real connector ID from existing inventory
