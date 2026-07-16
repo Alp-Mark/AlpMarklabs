@@ -6864,15 +6864,31 @@ def get_recommendation_evidence(
     period_start = snap_date - timedelta(days=lookback)
 
     # ── Load fitted model parameters ──────────────────────────────────────────
-    fitted_rows = db.execute(
-        text("""
-            SELECT fm.model_type, fm.model_metadata, fm.accuracy_metrics
-            FROM fitted_models fm
-            WHERE fm.tenant_id = :tid
-            ORDER BY fm.trained_at DESC LIMIT 4
-        """),
-        {"tid": str(tenant_id)},
-    ).fetchall()
+    # Scope to the specific optimization_run_id stored at creation time so
+    # recommendation values never drift as new models are retrained every 6h.
+    opt_run_id = meta_opt.get("optimization_run_id")
+    if opt_run_id:
+        fitted_rows = db.execute(
+            text("""
+                SELECT fm.model_type, fm.model_metadata, fm.accuracy_metrics
+                FROM fitted_models fm
+                WHERE fm.tenant_id = :tid
+                  AND fm.optimization_run_id = :run_id
+                ORDER BY fm.trained_at DESC LIMIT 4
+            """),
+            {"tid": str(tenant_id), "run_id": opt_run_id},
+        ).fetchall()
+    else:
+        # Fallback for older recommendations without run_id in metadata
+        fitted_rows = db.execute(
+            text("""
+                SELECT fm.model_type, fm.model_metadata, fm.accuracy_metrics
+                FROM fitted_models fm
+                WHERE fm.tenant_id = :tid
+                ORDER BY fm.trained_at DESC LIMIT 4
+            """),
+            {"tid": str(tenant_id)},
+        ).fetchall()
 
     params: dict[str, dict] = {}
     accuracy: dict[str, float] = {}
