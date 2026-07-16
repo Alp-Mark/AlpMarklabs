@@ -810,15 +810,17 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             "aov": aov,
         }
 
-        # Dedup: remove existing open single-channel recommendations for same channel
+        # Dedup: if an open recommendation already exists, return it unchanged.
+        # Only create a new one if the previous was acted on or doesn't exist.
         rule_id = f"OPT-SATURATION-{opt['channel'].upper()}"
-        self.db.execute(
-            delete(Recommendation).where(
-                Recommendation.tenant_id == self.tenant_id,
-                Recommendation.rule_id == rule_id,
-            )
-        )
-        self.db.flush()
+        open_statuses = ("new", "reviewed")
+        existing = self.db.query(Recommendation).filter(
+            Recommendation.tenant_id == self.tenant_id,
+            Recommendation.rule_id == rule_id,
+            Recommendation.status.in_(open_statuses),
+        ).first()
+        if existing:
+            return existing
 
         fitted_model = self.db.query(FittedModel).filter(
             FittedModel.optimization_run_id == self.optimization_run_id,
@@ -995,16 +997,17 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         else:
             priority = 30  # low
         
-        # Delete ALL previous OPT-BUDGET-001 recommendations for this tenant.
-        # We only ever want one current recommendation, not a growing pile
-        # of daily copies that all say the same thing.
+        # Dedup: if an open recommendation already exists, return it unchanged.
+        # Only create a new one if the previous was acted on or doesn't exist.
         today = date.today()
-        self.db.execute(
-            delete(Recommendation).where(
-                Recommendation.tenant_id == self.tenant_id,
-                Recommendation.rule_id == "OPT-BUDGET-001",
-            )
-        )
+        open_statuses = ("new", "reviewed")
+        existing = self.db.query(Recommendation).filter(
+            Recommendation.tenant_id == self.tenant_id,
+            Recommendation.rule_id == "OPT-BUDGET-001",
+            Recommendation.status.in_(open_statuses),
+        ).first()
+        if existing:
+            return existing
         self.db.flush()
         
         # Create recommendation
