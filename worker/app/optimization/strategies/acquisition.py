@@ -80,6 +80,9 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         self.lookback_days: int = 90  # Default lookback period
         self.optimization_run_id: UUID | None = None
         self.optimization_result: dict[str, Any] | None = None
+        # Single-channel mode: set when only one ad channel has data
+        self.single_channel_mode: bool = False
+        self.active_channel: str = "both"  # "meta", "google", or "both"
     
     def fetch_training_data(self, tenant_id: UUID, days: int = 90) -> dict[str, Any]:
         """Fetch historical ad spend and conversion data for Meta and Google.
@@ -221,32 +224,38 @@ class BudgetAllocationOptimizer(BaseOptimizer):
                 google_spend_list.append(google_spend)
                 google_conv_list.append(google_conv)
         
-        # Validate each channel has enough data
-        if len(meta_spend_list) < 7:
+        # Validate each channel has enough data — detect single-channel mode
+        meta_ok = len(meta_spend_list) >= 7
+        google_ok = len(google_spend_list) >= 7
+
+        if not meta_ok and not google_ok:
+            raise ValueError(
+                f"Insufficient data for both channels. "
+                f"Meta: {len(meta_spend_list)} days, Google: {len(google_spend_list)} days. "
+                f"Need at least 7 days per active channel."
+            )
+
+        if not meta_ok and google_ok:
             log_data_quality_issue(
                 tenant_id=tenant_id,
                 strategy_name="budget_allocation",
                 issue_type="insufficient_meta_data",
                 details={"days_with_spend": len(meta_spend_list), "required": 7},
-                severity="error",
+                severity="warning",
             )
-            raise ValueError(
-                f"Insufficient Meta ad spend data: only {len(meta_spend_list)} days. "
-                f"Need at least 7 days."
-            )
-        
-        if len(google_spend_list) < 7:
+            self.single_channel_mode = True
+            self.active_channel = "google"
+
+        if not google_ok and meta_ok:
             log_data_quality_issue(
                 tenant_id=tenant_id,
                 strategy_name="budget_allocation",
                 issue_type="insufficient_google_data",
                 details={"days_with_spend": len(google_spend_list), "required": 7},
-                severity="error",
+                severity="warning",
             )
-            raise ValueError(
-                f"Insufficient Google ad spend data: only "
-                f"{len(google_spend_list)} days. Need at least 7 days."
-            )
+            self.single_channel_mode = True
+            self.active_channel = "meta"
         
         # Calculate current budget (average daily spend over last 7 days)
         recent_dates = all_spend_dates[-7:]
@@ -299,65 +308,59 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         meta_data = self.training_data["meta"]
         google_data = self.training_data["google"]
         
-        # Fit Meta curve
-        try:
-            self.meta_curve = HillCurve()
-            self.meta_curve.fit(
-                spend_data=meta_data["spend"],
-                conversion_data=meta_data["conversions"],
-            )
-            meta_rmse = self.meta_curve.calculate_rmse(
-                spend_data=meta_data["spend"],
-                conversion_data=meta_data["conversions"],
-            )
-            meta_params = self.meta_curve.get_params()
-            
-            # Calculate R² (coefficient of determination)
-            meta_predictions = self.meta_curve.predict(meta_data["spend"])
-            meta_r2 = self._calculate_r2(
-                actual=meta_data["conversions"],
-                predicted=meta_predictions,
-            )
-            
-            # Save Meta model to S3 and database
-            self._save_fitted_model(
-                curve=self.meta_curve,
-                model_type="meta_saturation_curve",
-                params=meta_params,
-                metrics={"rmse": meta_rmse, "r2": meta_r2},
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to fit Meta Hill curve: {e}") from e
+        # Fit Meta curve (only if channel has data)
+        if self.active_channel in ("meta", "both") and len(meta_data["spend"]) >= 7:
+            try:
+                self.meta_curve = HillCurve()
+                self.meta_curve.fit(
+                    spend_data=meta_data["spend"],
+                    conversion_data=meta_data["conversions"],
+                )
+                meta_rmse = self.meta_curve.calculate_rmse(
+                    spend_data=meta_data["spend"],
+                    conversion_data=meta_data["conversions"],
+                )
+                meta_params = self.meta_curve.get_params()
+                meta_predictions = self.meta_curve.predict(meta_data["spend"])
+                meta_r2 = self._calculate_r2(
+                    actual=meta_data["conversions"],
+                    predicted=meta_predictions,
+                )
+                self._save_fitted_model(
+                    curve=self.meta_curve,
+                    model_type="meta_saturation_curve",
+                    params=meta_params,
+                    metrics={"rmse": meta_rmse, "r2": meta_r2},
+                )
+            except Exception as e:
+                raise RuntimeError(f"Failed to fit Meta Hill curve: {e}") from e
         
-        # Fit Google curve
-        try:
-            self.google_curve = HillCurve()
-            self.google_curve.fit(
-                spend_data=google_data["spend"],
-                conversion_data=google_data["conversions"],
-            )
-            google_rmse = self.google_curve.calculate_rmse(
-                spend_data=google_data["spend"],
-                conversion_data=google_data["conversions"],
-            )
-            google_params = self.google_curve.get_params()
-            
-            # Calculate R² (coefficient of determination)
-            google_predictions = self.google_curve.predict(google_data["spend"])
-            google_r2 = self._calculate_r2(
-                actual=google_data["conversions"],
-                predicted=google_predictions,
-            )
-            
-            # Save Google model to S3 and database
-            self._save_fitted_model(
-                curve=self.google_curve,
-                model_type="google_saturation_curve",
-                params=google_params,
-                metrics={"rmse": google_rmse, "r2": google_r2},
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to fit Google Hill curve: {e}") from e
+        # Fit Google curve (only if channel has data)
+        if self.active_channel in ("google", "both") and len(google_data["spend"]) >= 7:
+            try:
+                self.google_curve = HillCurve()
+                self.google_curve.fit(
+                    spend_data=google_data["spend"],
+                    conversion_data=google_data["conversions"],
+                )
+                google_rmse = self.google_curve.calculate_rmse(
+                    spend_data=google_data["spend"],
+                    conversion_data=google_data["conversions"],
+                )
+                google_params = self.google_curve.get_params()
+                google_predictions = self.google_curve.predict(google_data["spend"])
+                google_r2 = self._calculate_r2(
+                    actual=google_data["conversions"],
+                    predicted=google_predictions,
+                )
+                self._save_fitted_model(
+                    curve=self.google_curve,
+                    model_type="google_saturation_curve",
+                    params=google_params,
+                    metrics={"rmse": google_rmse, "r2": google_r2},
+                )
+            except Exception as e:
+                raise RuntimeError(f"Failed to fit Google Hill curve: {e}") from e
         
         # Store models in parent class attribute
         self.models = {
@@ -365,6 +368,77 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             "google": self.google_curve,
         }
     
+    def _optimize_single_channel(self) -> dict[str, Any]:
+        """Saturation analysis for brands running only one ad channel.
+
+        Instead of cross-channel reallocation, analyses whether the single
+        active channel is approaching diminishing returns and recommends a
+        spend cap or channel diversification.
+        """
+        channel = self.active_channel  # "meta" or "google"
+        curve = self.meta_curve if channel == "meta" else self.google_curve
+        data_key = channel  # "meta" or "google"
+
+        if curve is None:
+            raise RuntimeError(f"No fitted curve for {channel}")
+
+        spend_data = self.training_data[data_key]["spend"]
+        conv_data = self.training_data[data_key]["conversions"]
+
+        current_spend = float(np.mean(spend_data[-7:]))
+        current_conv = float(curve.predict(current_spend)[0])
+
+        # Find saturation knee: spend where marginal return drops below 30% of
+        # the return at 10% of current spend (a simple efficiency threshold)
+        low_spend = current_spend * 0.1
+        baseline_marginal = float(
+            curve.predict(low_spend * 1.1)[0] - curve.predict(low_spend)[0]
+        )
+        threshold = baseline_marginal * 0.30
+
+        # Walk up spend from 10% to 200% to find knee
+        knee_spend = current_spend  # default: no saturation detected
+        test_points = np.linspace(low_spend, current_spend * 2, 100)
+        for i in range(1, len(test_points)):
+            marginal = float(
+                curve.predict(test_points[i])[0] - curve.predict(test_points[i - 1])[0]
+            )
+            if marginal < threshold:
+                knee_spend = float(test_points[i])
+                break
+
+        saturated = current_spend > knee_spend * 1.05
+        saturation_pct = min(100, round(current_spend / knee_spend * 100))
+
+        # Revenue at current vs knee spend
+        knee_conv = float(curve.predict(knee_spend)[0])
+        aov = getattr(self, "aov", 0.0)
+        wasted_daily = max(0.0, (current_conv - knee_conv)) * aov
+
+        # Efficiency trend: first-quarter vs last-quarter of data
+        q = max(1, len(spend_data) // 4)
+        early_eff = float(np.mean(conv_data[:q] / (spend_data[:q] / 1000 + 1e-9)))
+        late_eff = float(np.mean(conv_data[-q:] / (spend_data[-q:] / 1000 + 1e-9)))
+        eff_change_pct = round((late_eff - early_eff) / (early_eff + 1e-9) * 100, 1)
+
+        result: dict[str, Any] = {
+            "mode": "single_channel",
+            "channel": channel,
+            "current_spend": current_spend,
+            "current_conversions": current_conv,
+            "knee_spend": knee_spend,
+            "saturated": saturated,
+            "saturation_pct": saturation_pct,
+            "efficiency_change_pct": eff_change_pct,
+            "wasted_daily_revenue": wasted_daily,
+            "aov": aov,
+            # Dummy lift fields (cross-channel not applicable)
+            "lift_pct": 0.0,
+            "daily_revenue_impact": -wasted_daily if saturated else 0.0,
+        }
+        self.optimization_result = result
+        return result
+
     def optimize(self) -> dict[str, Any]:
         """Find optimal budget allocation using constrained optimization.
         
@@ -389,6 +463,10 @@ class BudgetAllocationOptimizer(BaseOptimizer):
         Raises:
             RuntimeError: If models are not trained or optimization fails
         """
+        # Single-channel brands: run saturation analysis instead
+        if self.single_channel_mode:
+            return self._optimize_single_channel()
+
         try:
             if self.meta_curve is None or self.google_curve is None:
                 raise RuntimeError("Must train models before optimizing")
@@ -680,6 +758,97 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             "priority": priority,
         }
     
+    def _create_single_channel_recommendation(self, opt: dict[str, Any]) -> Recommendation:
+        """Create a saturation-warning recommendation for single-channel brands."""
+        channel_name = "Meta" if opt["channel"] == "meta" else "Google"
+        today = date.today()
+        saturated = opt["saturated"]
+        eff_change = opt["efficiency_change_pct"]
+        current_spend = opt["current_spend"]
+        knee_spend = opt["knee_spend"]
+        wasted = opt["wasted_daily_revenue"]
+        aov = opt["aov"]
+
+        if saturated:
+            signal_summary = (
+                f"{channel_name} spend is ₹{current_spend:,.0f}/day — "
+                f"{opt['saturation_pct']}% past the saturation knee (₹{knee_spend:,.0f}/day). "
+                f"Efficiency dropped {abs(eff_change):.1f}% over the period."
+            )
+            suggested_action = (
+                f"Cap {channel_name} spend at ₹{knee_spend:,.0f}/day to eliminate "
+                f"~₹{wasted:,.0f}/day in diminishing-return waste. "
+                f"Reallocate the saved ₹{current_spend - knee_spend:,.0f}/day "
+                f"to test a second acquisition channel."
+            )
+            impact = wasted
+            priority = 80 if wasted > 5000 else 55
+        else:
+            signal_summary = (
+                f"{channel_name} is your only active acquisition channel. "
+                f"Efficiency has changed {eff_change:+.1f}% over the period. "
+                f"Spend is ₹{current_spend:,.0f}/day — below saturation point."
+            )
+            suggested_action = (
+                f"Your {channel_name} spend is not yet saturating. "
+                f"Consider testing a second channel (e.g., {'Google' if channel_name == 'Meta' else 'Meta'}) "
+                f"to reduce single-channel dependency and unlock additional growth."
+            )
+            impact = 0.0
+            priority = 35
+
+        optimization_metadata = {
+            "optimization_run_id": str(self.optimization_run_id),
+            "mode": "single_channel",
+            "channel": opt["channel"],
+            "current_spend": current_spend,
+            "knee_spend": knee_spend,
+            "saturated": saturated,
+            "saturation_pct": opt["saturation_pct"],
+            "efficiency_change_pct": eff_change,
+            "wasted_daily_revenue": wasted,
+            "aov": aov,
+        }
+
+        # Dedup: remove existing open single-channel recommendations for same channel
+        rule_id = f"OPT-SATURATION-{opt['channel'].upper()}"
+        self.db.execute(
+            delete(Recommendation).where(
+                Recommendation.tenant_id == self.tenant_id,
+                Recommendation.rule_id == rule_id,
+            )
+        )
+        self.db.flush()
+
+        fitted_model = self.db.query(FittedModel).filter(
+            FittedModel.optimization_run_id == self.optimization_run_id,
+        ).first()
+
+        recommendation = Recommendation(
+            tenant_id=self.tenant_id,
+            rule_id=rule_id,
+            domain="acquisition",
+            snapshot_date=today,
+            affected_area=f"{channel_name} Ads Saturation",
+            signal_summary=signal_summary,
+            suggested_action=suggested_action,
+            estimated_impact=impact,
+            confidence_level="medium",
+            confidence_score=0.6,
+            data_freshness_context=f"Based on {self.lookback_days} days of {channel_name} spend data",
+            status="new",
+            priority=priority,
+            impact_score=impact,
+            evidence=opt,
+            data_sources=[opt["channel"], "shopify"],
+            source="optimization",
+            optimization_metadata=optimization_metadata,
+            fitted_model_id=fitted_model.id if fitted_model else None,
+        )
+        self.db.add(recommendation)
+        self.db.flush()
+        return recommendation
+
     def create_recommendation_record(self) -> Recommendation:
         """Create a Recommendation database record from optimization result.
         
@@ -703,6 +872,12 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             raise RuntimeError("optimization_run_id not set")
         
         opt = self.optimization_result
+
+        # ── Single-channel path ───────────────────────────────────────────────
+        if self.single_channel_mode:
+            return self._create_single_channel_recommendation(opt)
+
+        # ── Dual-channel path (existing logic below) ──────────────────────────
         
         # Get model metadata for optimization_metadata field
         meta_model = self.db.query(FittedModel).filter(
