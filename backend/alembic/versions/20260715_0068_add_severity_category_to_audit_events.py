@@ -19,10 +19,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Create ENUM type for severity
+    # Create ENUM type (idempotent — survives partial prior runs)
     op.execute(
-        "CREATE TYPE audit_event_severity AS ENUM "
-        "('critical', 'important', 'info', 'debug')"
+        """
+        DO $$ BEGIN
+            CREATE TYPE audit_event_severity AS ENUM
+                ('critical', 'important', 'info', 'debug');
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+        """
     )
 
     # Add severity column (defaults to 'info' for existing records)

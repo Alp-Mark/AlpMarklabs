@@ -18,7 +18,7 @@ SYSTEM_SYNC_CADENCE = {
     "rule-engine-schedule": timedelta(hours=1),  # Every 1 hour
     "threshold-suggestion-schedule": timedelta(days=7),
     "run-optimization-engine": timedelta(hours=6),  # Every 6 hours (Phase 2)
-    "demo-data-generation-6h": timedelta(hours=6),  # Every 6 hours (One8 demo)
+    "demo-data-generation-6h": timedelta(hours=3),  # Every 6 hours (One8 demo)
     "daily-data-simulation": timedelta(days=1),  # Every day at midnight
 }
 
