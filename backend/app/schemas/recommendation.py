@@ -22,13 +22,25 @@ def _rec_title(rule_id: str, affected_area: str, meta: dict | None) -> str:
         g_eff      = g_alloc.get("current_efficiency", 0)
         shift_to   = "Google" if g_eff > meta_eff else "Meta"
         shift_from = "Meta" if shift_to == "Google" else "Google"
-        shift_amt  = abs(
-            meta_alloc.get("spend_change", 0) or g_alloc.get("spend_change", 0)
-        )
-        return (
-            f"Shift ₹{shift_amt / 1000:.0f}K/day from {shift_from} to {shift_to}"
-        )
-    # Humanise rule_id (e.g. RET-REPEAT-001 \u2192 "Repeat Purchase Rate")
+        # Use absolute spend_change; fall back to computing from current vs optimal
+        shift_amt = abs(meta_alloc.get("spend_change", 0) or 0)
+        if shift_amt == 0:
+            cur = meta_alloc.get("current_spend", 0)
+            opt = meta_alloc.get("optimal_spend", 0)
+            shift_amt = abs(opt - cur)
+        if shift_amt < 1000:
+            return f"Rebalance Meta and Google ad budget"
+        return f"Shift ₹{shift_amt / 1000:.0f}K/day from {shift_from} to {shift_to}"
+
+    if rule_id.startswith("OPT-SATURATION-") and meta:
+        channel = meta.get("channel", "").title() or rule_id.split("-")[-1].title()
+        saturated = meta.get("saturated", False)
+        knee = meta.get("knee_spend", 0)
+        if saturated and knee:
+            return f"Cap {channel} spend — diminishing returns past ₹{knee / 1000:.0f}K/day"
+        return f"{channel} only — consider testing a second ad channel"
+
+    # Humanise rule_id (e.g. RET-REPEAT-001 → "Repeat Purchase Rate")
     parts = rule_id.replace("-", " ").title().split()
     label = " ".join(p for p in parts if not p.isdigit())
     if affected_area and affected_area not in ("Meta Ads, Google Ads",):
@@ -53,6 +65,19 @@ def _rec_short_description(
         return (
             f"{saturating} audiences are saturating"
             f" — {growing} can convert that budget better right now."
+        )
+    if rule_id.startswith("OPT-SATURATION-") and meta:
+        channel = meta.get("channel", "").title() or rule_id.split("-")[-1].title()
+        saturated = meta.get("saturated", False)
+        eff_change = meta.get("efficiency_change_pct", 0)
+        if saturated:
+            return (
+                f"{channel} efficiency has dropped {abs(eff_change):.0f}% "
+                f"— each extra rupee spent is returning less than before."
+            )
+        return (
+            f"You're running on {channel} only. Adding a second channel "
+            f"reduces risk and unlocks more conversion volume."
         )
     # Fall back to first sentence of signal_summary
     first = signal_summary.split(".")[0].strip()
