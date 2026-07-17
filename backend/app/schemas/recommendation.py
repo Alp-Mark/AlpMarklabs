@@ -37,8 +37,8 @@ def _rec_title(rule_id: str, affected_area: str, meta: dict | None) -> str:
         saturated = meta.get("saturated", False)
         knee = meta.get("knee_spend", 0)
         if saturated and knee:
-            return f"Cap {channel} spend — diminishing returns past ₹{knee / 1000:.0f}K/day"
-        return f"{channel} only — consider testing a second ad channel"
+            return f"Cap {channel} spend. Diminishing returns past ₹{knee / 1000:.0f}K/day"
+        return f"{channel} only. Consider testing a second ad channel"
 
     # Humanise rule_id (e.g. RET-REPEAT-001 → "Repeat Purchase Rate")
     parts = rule_id.replace("-", " ").title().split()
@@ -63,8 +63,8 @@ def _rec_short_description(
         saturating = "Meta" if meta_eff < g_eff else "Google"
         growing    = "Google" if saturating == "Meta" else "Meta"
         return (
-            f"{saturating} audiences are saturating"
-            f" — {growing} can convert that budget better right now."
+            f"{saturating} audiences are saturating."
+            f" {growing} can convert that budget better right now."
         )
     if rule_id.startswith("OPT-SATURATION-") and meta:
         channel = meta.get("channel", "").title() or rule_id.split("-")[-1].title()
@@ -72,8 +72,8 @@ def _rec_short_description(
         eff_change = meta.get("efficiency_change_pct", 0)
         if saturated:
             return (
-                f"{channel} efficiency has dropped {abs(eff_change):.0f}% "
-                f"— each extra rupee spent is returning less than before."
+                f"{channel} efficiency has dropped {abs(eff_change):.0f}%."
+                f" Each extra rupee spent is returning less than before."
             )
         return (
             f"You're running on {channel} only. Adding a second channel "
@@ -118,8 +118,8 @@ def _rec_supporting_signals(
             "value": (
                 f"Every ₹1,000 spent on Meta is generating {meta_eff:.2f} conversions."
                 + (
-                    " Spending more is producing fewer additional results —"
-                    " the audience is getting saturated."
+                    " Spending more is producing fewer additional results."
+                    " The audience is getting saturated."
                     if meta_eff < meta_opt
                     else " Meta is performing well and has room for more spend."
                 )
@@ -131,7 +131,7 @@ def _rec_supporting_signals(
             "value": (
                 f"Every ₹1,000 spent on Google is generating {g_eff:.2f} conversions."
                 + (
-                    " There is room to grow here — adding more budget"
+                    " There is room to grow here. Adding more budget"
                     " should improve results before hitting a ceiling."
                     if g_eff < g_opt
                     else " Google is already at its most efficient."
@@ -144,7 +144,7 @@ def _rec_supporting_signals(
             "value": (
                 f"Move ₹{shift_amt / 1000:.0f}K/day ({direction})"
                 " without changing the total budget."
-                " The money is already being spent — it just performs better"
+                " The money is already being spent. It just performs better"
                 " on a different channel right now."
             ),
             "context": None,
