@@ -92,8 +92,7 @@ class MultiChannelAllocator(BaseOptimizer):
             "google": 2.0,
             "influencer": 1.8,  # Lower floor (harder attribution)
             "email": 3.0,       # Higher floor (owned channel)
-            "tv_streaming": 1.5, # Lower floor (brand awareness)
-            "affiliate": 2.5,    # Higher floor (performance-based)
+            "affiliate": 2.5,   # Higher floor (performance-based)
         }
         
         # Min daily spend per channel (platform minimums)
@@ -102,7 +101,6 @@ class MultiChannelAllocator(BaseOptimizer):
             "google": 5000.0,
             "influencer": 3000.0,  # Lower min (can pause all)
             "email": 2000.0,       # Lower min (base Klaviyo cost)
-            "tv_streaming": 10000.0, # Higher min (ad flight minimums)
             "affiliate": 3000.0,   # Lower min (commission-based)
         }
     
@@ -260,7 +258,6 @@ class MultiChannelAllocator(BaseOptimizer):
             "google": {"spend": [], "conversions": [], "revenue": []},
             "influencer": {"spend": [], "conversions": [], "revenue": []},
             "email": {"spend": [], "conversions": [], "revenue": []},
-            "tv_streaming": {"spend": [], "conversions": [], "revenue": []},
             "affiliate": {"spend": [], "conversions": [], "revenue": []},
         }
         
@@ -274,7 +271,6 @@ class MultiChannelAllocator(BaseOptimizer):
             default_channel_data = {"spend": 0, "conversions": 0, "revenue": 0}
             influencer_data = date_multi.get("influencer", default_channel_data)
             email_data = date_multi.get("email", default_channel_data)
-            tv_data = date_multi.get("tv_streaming", default_channel_data)
             affiliate_data = date_multi.get("affiliate", default_channel_data)
             
             # Total spend for attribution
@@ -283,7 +279,6 @@ class MultiChannelAllocator(BaseOptimizer):
                 + google_spend
                 + influencer_data["spend"]
                 + email_data["spend"]
-                + tv_data["spend"]
                 + affiliate_data["spend"]
             )
             
@@ -299,7 +294,6 @@ class MultiChannelAllocator(BaseOptimizer):
                 attributed_conversions = (
                     influencer_data["conversions"]
                     + email_data["conversions"]
-                    + tv_data["conversions"]
                     + affiliate_data["conversions"]
                 )
                 remaining_orders = max(0, orders - attributed_conversions)
@@ -337,11 +331,6 @@ class MultiChannelAllocator(BaseOptimizer):
                 channel_data["email"]["spend"].append(email_data["spend"])
                 channel_data["email"]["conversions"].append(email_data["conversions"])
                 channel_data["email"]["revenue"].append(email_data["revenue"])
-            
-            if tv_data["spend"] > 0:
-                channel_data["tv_streaming"]["spend"].append(tv_data["spend"])
-                channel_data["tv_streaming"]["conversions"].append(tv_data["conversions"])
-                channel_data["tv_streaming"]["revenue"].append(tv_data["revenue"])
             
             if affiliate_data["spend"] > 0:
                 channel_data["affiliate"]["spend"].append(affiliate_data["spend"])
@@ -386,7 +375,7 @@ class MultiChannelAllocator(BaseOptimizer):
             recent_total_spend += meta_spend_dict.get(d, 0.0)
             recent_total_spend += google_spend_dict.get(d, 0.0)
             date_multi = multi_channel_dict.get(d, {})
-            for channel_name in ["influencer", "email", "tv_streaming", "affiliate"]:
+            for channel_name in ["influencer", "email", "affiliate"]:
                 recent_total_spend += date_multi.get(channel_name, {}).get("spend", 0.0)
         
         self.current_budget = recent_total_spend / 7  # Average daily budget
@@ -426,7 +415,8 @@ class MultiChannelAllocator(BaseOptimizer):
         self.optimization_run_id = optimization_run.id
         
         # Fit curve for each active channel
-        for channel_name in self.active_channels:
+        # Use list() copy to avoid mutation-during-iteration bug
+        for channel_name in list(self.active_channels):
             data = self.training_data[channel_name]
             
             try:
