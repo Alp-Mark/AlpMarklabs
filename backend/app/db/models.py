@@ -108,6 +108,9 @@ class Tenant(Base):
     google_ad_spends: Mapped[list[GoogleAdSpend]] = relationship(
         back_populates="tenant"
     )
+    marketing_channel_spends: Mapped[list[MarketingChannelSpend]] = relationship(
+        back_populates="tenant"
+    )
     executive_kpi_snapshots: Mapped[list[ExecutiveKpiSnapshot]] = relationship(
         back_populates="tenant"
     )
@@ -750,6 +753,49 @@ class GoogleAdSpend(Base):
     connector: Mapped[ConnectorIntegration] = relationship(
         back_populates="google_ad_spends"
     )
+
+
+class MarketingChannelSpend(Base):
+    """Daily spend, conversions, and revenue for non-Meta/Google channels.
+
+    Covers: influencer, email, tv_streaming, affiliate, and any future channels.
+    Used by MultiChannelAllocator to train Hill saturation curves per channel.
+    """
+
+    __tablename__ = "marketing_channel_spends"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "channel_name",
+            "spend_date",
+            name="uq_marketing_channel_spend_per_channel_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False
+    )
+    channel_name: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # influencer, email, tv_streaming, affiliate
+    spend_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="INR")
+    spend_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    conversions: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    revenue: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="marketing_channel_spends")
 
 
 class ShopifyOrder(Base):

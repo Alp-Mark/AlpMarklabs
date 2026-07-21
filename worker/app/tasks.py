@@ -45,6 +45,9 @@ from worker.app.daily_data_simulator import run_daily_simulation
 from worker.app.optimization.strategies.acquisition import (
     BudgetAllocationOptimizer,
 )
+from worker.app.optimization.strategies.multi_channel import (
+    MultiChannelAllocator,
+)
 from worker.app.optimization.utils.monitoring import (
     log_optimization_failure,
     log_optimization_start,
@@ -3941,6 +3944,47 @@ def run_optimization_engine_job(
                         )
                         successful_runs += 1
                     
+                    elif strategy.strategy_type == "multi_channel_allocation":
+                        optimizer = MultiChannelAllocator(
+                            strategy_id=strategy.id,
+                            db=db,
+                        )
+                        
+                        result = optimizer.run(
+                            tenant_id=tenant.id,
+                            days=strategy.config.get("lookback_days", 90),
+                        )
+                        
+                        recommendation = optimizer.create_recommendation_record()
+                        db.commit()
+                        recommendations_created += 1
+                        
+                        if optimizer.optimization_run_id:
+                            log_optimization_success(
+                                run_id=optimizer.optimization_run_id,
+                                tenant_id=tenant.id,
+                                strategy_name=strategy.strategy_name,
+                                metrics={
+                                    "lift_pct": result.get("lift_pct", 0),
+                                    "num_channels": result.get("num_channels"),
+                                    "confidence": getattr(
+                                        recommendation,
+                                        "confidence_score",
+                                        None,
+                                    ),
+                                    "recommendation_id": str(recommendation.id),
+                                },
+                            )
+                        
+                        logger.info(
+                            f"Multi-channel optimization success: "
+                            f"{tenant.slug} / {strategy.strategy_name} "
+                            f"- lift={result.get('lift_pct', 0):.1f}% "
+                            f"- channels={result.get('num_channels')} "
+                            f"- recommendation={recommendation.id}"
+                        )
+                        successful_runs += 1
+
                     else:
                         logger.warning(
                             f"Optimization engine: Unknown strategy type "

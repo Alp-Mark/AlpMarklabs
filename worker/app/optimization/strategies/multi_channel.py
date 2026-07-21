@@ -36,7 +36,7 @@ from backend.app.db.models import (
     ShopifyOrder,
 )
 from scipy.optimize import minimize
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from worker.app.optimization.models.saturation import HillCurve
@@ -809,14 +809,17 @@ class MultiChannelAllocator(BaseOptimizer):
         avg_r2 = sum(r2_scores) / len(r2_scores) if r2_scores else 0.5
         confidence_level = self._map_confidence_to_level(avg_r2)
         
-        # Delete previous OPT-MULTICHANNEL-001 recommendations
+        # Dedup: if an open recommendation already exists, return it unchanged.
+        # Only create a new one if the previous was acted on or doesn't exist.
         today = date.today()
-        self.db.execute(
-            delete(Recommendation).where(
-                Recommendation.tenant_id == self.tenant_id,
-                Recommendation.rule_id == "OPT-MULTICHANNEL-001",
-            )
-        )
+        open_statuses = ("new", "reviewed")
+        existing = self.db.query(Recommendation).filter(
+            Recommendation.tenant_id == self.tenant_id,
+            Recommendation.rule_id == "OPT-MULTICHANNEL-001",
+            Recommendation.status.in_(open_statuses),
+        ).first()
+        if existing:
+            return existing
         self.db.flush()
         
         # Create recommendation
