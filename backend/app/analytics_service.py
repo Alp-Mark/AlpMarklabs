@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.db.models import (
     GoogleAdSpend,
+    MarketingChannelSpend,
     MetaAdSpend,
     ShopifyInventoryItem,
     ShopifyOrder,
@@ -179,55 +180,86 @@ def get_channel_breakdown(
             "conversion_count": 0,
         }
 
-    # Meta spend attribution
-    meta_stmt = select(
-        func.count().label("count"),
-        func.sum(MetaAdSpend.spend_amount).label("total_spend"),
-    ).where(
-        MetaAdSpend.tenant_id == tenant_id,
-        MetaAdSpend.spend_date >= period_start,
-        MetaAdSpend.spend_date <= period_end,
-    )
+    # ── Real attribution from actual spend and conversion data ───────────────
 
-    meta_result = db.execute(meta_stmt).first()
-    if meta_result and meta_result[1]:  # If there's spend
-        # Simple attribution: assume proportion based on spend
-        # In a real system, you'd have explicit attribution data
-        meta_orders_count = int(total_orders * 0.25) if total_orders > 0 else 0
-        meta_revenue = (
-            sum(all_orders.values()) * 0.25 if all_orders else 0.0
+    # 1. Meta and Google: proportional spend attribution
+    meta_spend = db.scalar(
+        select(func.sum(MetaAdSpend.spend_amount)).where(
+            MetaAdSpend.tenant_id == tenant_id,
+            MetaAdSpend.spend_date >= period_start,
+            MetaAdSpend.spend_date <= period_end,
         )
-        channels_breakdown["meta"]["order_count"] = meta_orders_count
-        channels_breakdown["meta"]["revenue"] = meta_revenue
-        channels_breakdown["meta"]["conversion_count"] = meta_orders_count
+    ) or 0.0
 
-    # Google spend attribution
-    google_stmt = select(
-        func.count().label("count"),
-        func.sum(GoogleAdSpend.spend_amount).label("total_spend"),
-    ).where(
-        GoogleAdSpend.tenant_id == tenant_id,
-        GoogleAdSpend.spend_date >= period_start,
-        GoogleAdSpend.spend_date <= period_end,
-    )
-
-    google_result = db.execute(google_stmt).first()
-    if google_result and google_result[1]:  # If there's spend
-        google_orders_count = (
-            int(total_orders * 0.20) if total_orders > 0 else 0
+    google_spend = db.scalar(
+        select(func.sum(GoogleAdSpend.spend_amount)).where(
+            GoogleAdSpend.tenant_id == tenant_id,
+            GoogleAdSpend.spend_date >= period_start,
+            GoogleAdSpend.spend_date <= period_end,
         )
-        google_revenue = (
-            sum(all_orders.values()) * 0.20 if all_orders else 0.0
+    ) or 0.0
+
+    # 2. Influencer, email, affiliate: actual conversions from marketing_channel_spends
+    TRACKED_CHANNELS = ("influencer", "email", "affiliate")
+    mcs_rows = db.execute(
+        select(
+            MarketingChannelSpend.channel_name,
+            func.sum(MarketingChannelSpend.conversions).label("total_conversions"),
+            func.sum(MarketingChannelSpend.revenue).label("total_revenue"),
         )
-        channels_breakdown["google"]["order_count"] = google_orders_count
-        channels_breakdown["google"]["revenue"] = google_revenue
-        channels_breakdown["google"]["conversion_count"] = google_orders_count
+        .where(
+            MarketingChannelSpend.tenant_id == tenant_id,
+            MarketingChannelSpend.channel_name.in_(TRACKED_CHANNELS),
+            MarketingChannelSpend.spend_date >= period_start,
+            MarketingChannelSpend.spend_date <= period_end,
+        )
+        .group_by(MarketingChannelSpend.channel_name)
+    ).fetchall()
 
-    # Note: Marketing channel spends (influencer, email, tv_streaming, affiliate)
-    # will be integrated in Steps 4-10 when MarketingChannelSpend model is available.
-    # For now, leave these channels with zero values.
+    mcs_conversions: dict[str, float] = {}
+    mcs_revenue: dict[str, float] = {}
+    for row in mcs_rows:
+        mcs_conversions[row.channel_name] = float(row.total_conversions or 0)
+        mcs_revenue[row.channel_name] = float(row.total_revenue or 0)
 
-    # Calculate organic = total - attributed
+    # 3. Attribute orders: subtract mcs-attributed, split remainder by Meta/Google spend
+    mcs_total_conv = sum(mcs_conversions.values())
+    remaining_orders = max(0, total_orders - int(mcs_total_conv))
+    total_revenue_val = sum(all_orders.values())
+    remaining_revenue = max(0.0, total_revenue_val - sum(mcs_revenue.values()))
+
+    paid_total = meta_spend + google_spend
+    if paid_total > 0:
+        meta_frac = meta_spend / paid_total
+        google_frac = google_spend / paid_total
+    else:
+        meta_frac = 0.0
+        google_frac = 0.0
+
+    meta_orders = int(remaining_orders * meta_frac)
+    google_orders = int(remaining_orders * google_frac)
+    meta_rev = remaining_revenue * meta_frac
+    google_rev = remaining_revenue * google_frac
+
+    if meta_orders > 0 or meta_spend > 0:
+        channels_breakdown["meta"]["order_count"] = meta_orders
+        channels_breakdown["meta"]["revenue"] = meta_rev
+        channels_breakdown["meta"]["conversion_count"] = meta_orders
+
+    if google_orders > 0 or google_spend > 0:
+        channels_breakdown["google"]["order_count"] = google_orders
+        channels_breakdown["google"]["revenue"] = google_rev
+        channels_breakdown["google"]["conversion_count"] = google_orders
+
+    for ch in TRACKED_CHANNELS:
+        conv = int(mcs_conversions.get(ch, 0))
+        rev = mcs_revenue.get(ch, 0.0)
+        if conv > 0 or rev > 0:
+            channels_breakdown[ch]["order_count"] = conv
+            channels_breakdown[ch]["revenue"] = rev
+            channels_breakdown[ch]["conversion_count"] = conv
+
+    # 4. Organic = whatever isn't attributed to paid/mcs channels
     attributed_orders = sum(
         c["order_count"]
         for ch, c in channels_breakdown.items()
@@ -240,12 +272,12 @@ def get_channel_breakdown(
         for ch, c in channels_breakdown.items()
         if ch != "organic"
     )
-    organic_revenue = max(0.0, sum(all_orders.values()) - attributed_revenue)
+    organic_revenue = max(0.0, total_revenue_val - attributed_revenue)
 
     channels_breakdown["organic"]["order_count"] = organic_orders
     channels_breakdown["organic"]["revenue"] = organic_revenue
 
-    total_revenue = sum(all_orders.values())
+    total_revenue = total_revenue_val
 
     # Build response
     channels = []
