@@ -71,6 +71,7 @@ from backend.app.db.models import (
     SupportTicket,
     SystemHealthEvent,
     Tenant,
+    TenantGoal,
     TenantFeatureFlag,
     TenantMembership,
     TenantRuleThreshold,
@@ -119,6 +120,13 @@ from backend.app.schemas.activity_log import (
     ActivityLogResponse,
     SystemHealthIssue,
     SystemHealthResponse,
+)
+from backend.app.schemas.goals import (
+    METRIC_LABELS,
+    TenantGoalCreate,
+    TenantGoalResponse,
+    TenantGoalsResponse,
+    TenantGoalUpdate,
 )
 from backend.app.schemas.admin_audit import (
     AdminAuditLogListResponse,
@@ -13144,3 +13152,287 @@ def get_marketing_channel_performance(
     }
 
 
+
+# ── Goals & Targets endpoints ─────────────────────────────────────────────────
+
+GOAL_UNITS: dict[str, str] = {
+    "monthly_revenue": "₹",
+    "daily_orders": "orders",
+    "monthly_orders": "orders",
+    "aov": "₹",
+    "blended_roas": "x",
+    "contribution_margin_pct": "%",
+    "cac_payback_days": "days",
+    "repeat_purchase_rate_pct": "%",
+    "return_rate_pct": "%",
+}
+
+
+def _goal_current_value(
+    metric_key: str,
+    tenant_id: uuid.UUID,
+    db: Session,
+) -> float | None:
+    """Resolve latest value for a metric from existing KPI snapshots."""
+    snap = db.execute(
+        text("""
+            SELECT revenue_amount, orders_count, aov, roas,
+                   contribution_margin_pct, cac_payback_days,
+                   repeat_purchase_rate, return_rate
+            FROM executive_kpi_snapshots
+            WHERE tenant_id = :tid
+            ORDER BY snapshot_date DESC
+            LIMIT 1
+        """),
+        {"tid": str(tenant_id)},
+    ).fetchone()
+
+    if snap is None:
+        return None
+
+    mapping = {
+        "monthly_revenue": snap.revenue_amount,
+        "monthly_orders": snap.orders_count,
+        "aov": snap.aov,
+        "blended_roas": snap.roas,
+        "contribution_margin_pct": snap.contribution_margin_pct,
+        "cac_payback_days": snap.cac_payback_days,
+        "repeat_purchase_rate_pct": snap.repeat_purchase_rate,
+        "return_rate_pct": snap.return_rate,
+    }
+
+    if metric_key == "daily_orders":
+        monthly = mapping.get("monthly_orders")
+        return round(monthly / 30, 1) if monthly else None
+
+    return mapping.get(metric_key)
+
+
+def _goal_status(
+    current: float | None,
+    target: float,
+    target_date: date,
+    metric_key: str,
+) -> tuple[str, float | None]:
+    """Return (status, progress_pct). Lower-is-better metrics inverted."""
+    if current is None:
+        return "unknown", None
+
+    lower_is_better = metric_key in ("cac_payback_days", "return_rate_pct")
+
+    if lower_is_better:
+        progress = (target / current * 100) if current > 0 else 100.0
+        achieved = current <= target
+    else:
+        progress = min(100.0, (current / target * 100)) if target > 0 else 100.0
+        achieved = current >= target
+
+    if achieved:
+        return "achieved", 100.0
+
+    if lower_is_better:
+        gap_pct = (current - target) / current * 100 if current > 0 else 0
+    else:
+        gap_pct = (target - current) / target * 100 if target > 0 else 0
+
+    if gap_pct <= 5:
+        st = "on_track"
+    elif gap_pct <= 15:
+        st = "at_risk"
+    else:
+        st = "behind"
+
+    return st, round(progress, 1)
+
+
+@app.get("/tenants/{tenant_id}/goals", response_model=TenantGoalsResponse)
+def list_tenant_goals(
+    tenant_id: uuid.UUID,
+    _auth: ExecutiveViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    pinned_only: bool = Query(
+        default=False,
+        description="Return only pinned goals",
+    ),
+) -> TenantGoalsResponse:
+    """List all goals for a tenant with live current values and status."""
+    _get_tenant_or_404(db, tenant_id)
+
+    stmt = select(TenantGoal).where(TenantGoal.tenant_id == tenant_id)
+    if pinned_only:
+        stmt = stmt.where(TenantGoal.is_pinned == True)  # noqa: E712
+    stmt = stmt.order_by(TenantGoal.created_at.desc())
+    goals = list(db.scalars(stmt))
+
+    items = []
+    for g in goals:
+        current = _goal_current_value(g.metric_key, tenant_id, db)
+        status, progress = _goal_status(
+            current, g.target_value, g.target_date, g.metric_key
+        )
+        items.append(
+            TenantGoalResponse(
+                id=g.id,
+                tenant_id=g.tenant_id,
+                metric_key=g.metric_key,
+                label=g.label or METRIC_LABELS.get(g.metric_key, g.metric_key),
+                target_value=g.target_value,
+                target_date=g.target_date,
+                is_pinned=g.is_pinned,
+                notes=g.notes,
+                created_at=g.created_at,
+                updated_at=g.updated_at,
+                current_value=current,
+                progress_pct=progress,
+                status=status,
+                unit=GOAL_UNITS.get(g.metric_key),
+            )
+        )
+
+    return TenantGoalsResponse(goals=items, total=len(items))
+
+
+@app.post(
+    "/tenants/{tenant_id}/goals",
+    response_model=TenantGoalResponse,
+    status_code=201,
+)
+def create_tenant_goal(
+    tenant_id: uuid.UUID,
+    body: TenantGoalCreate,
+    _auth: ExecutiveViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> TenantGoalResponse:
+    """Create a new goal for a tenant."""
+    _get_tenant_or_404(db, tenant_id)
+
+    # Limit pinned goals to 5
+    if body.is_pinned:
+        pinned_count = db.scalar(
+            select(func.count())
+            .select_from(TenantGoal)
+            .where(
+                TenantGoal.tenant_id == tenant_id,
+                TenantGoal.is_pinned == True,  # noqa: E712
+            )
+        ) or 0
+        if pinned_count >= 5:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Maximum 5 pinned goals allowed. Unpin an existing goal first.",
+            )
+
+    goal = TenantGoal(
+        tenant_id=tenant_id,
+        metric_key=body.metric_key,
+        label=body.label,
+        target_value=body.target_value,
+        target_date=body.target_date,
+        is_pinned=body.is_pinned,
+        notes=body.notes,
+    )
+    db.add(goal)
+    db.commit()
+    db.refresh(goal)
+
+    current = _goal_current_value(goal.metric_key, tenant_id, db)
+    st, progress = _goal_status(
+        current, goal.target_value, goal.target_date, goal.metric_key
+    )
+
+    return TenantGoalResponse(
+        id=goal.id,
+        tenant_id=goal.tenant_id,
+        metric_key=goal.metric_key,
+        label=goal.label or METRIC_LABELS.get(goal.metric_key, goal.metric_key),
+        target_value=goal.target_value,
+        target_date=goal.target_date,
+        is_pinned=goal.is_pinned,
+        notes=goal.notes,
+        created_at=goal.created_at,
+        updated_at=goal.updated_at,
+        current_value=current,
+        progress_pct=progress,
+        status=st,
+        unit=GOAL_UNITS.get(goal.metric_key),
+    )
+
+
+@app.patch("/tenants/{tenant_id}/goals/{goal_id}", response_model=TenantGoalResponse)
+def update_tenant_goal(
+    tenant_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    body: TenantGoalUpdate,
+    _auth: ExecutiveViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> TenantGoalResponse:
+    """Update an existing goal."""
+    _get_tenant_or_404(db, tenant_id)
+
+    goal = db.scalar(
+        select(TenantGoal).where(
+            TenantGoal.id == goal_id,
+            TenantGoal.tenant_id == tenant_id,
+        )
+    )
+    if goal is None:
+        raise HTTPException(status_code=404, detail="Goal not found.")
+
+    if body.target_value is not None:
+        goal.target_value = body.target_value
+    if body.target_date is not None:
+        goal.target_date = body.target_date
+    if body.label is not None:
+        goal.label = body.label
+    if body.notes is not None:
+        goal.notes = body.notes
+    if body.is_pinned is not None:
+        goal.is_pinned = body.is_pinned
+
+    db.commit()
+    db.refresh(goal)
+
+    current = _goal_current_value(goal.metric_key, tenant_id, db)
+    st, progress = _goal_status(
+        current, goal.target_value, goal.target_date, goal.metric_key
+    )
+
+    return TenantGoalResponse(
+        id=goal.id,
+        tenant_id=goal.tenant_id,
+        metric_key=goal.metric_key,
+        label=goal.label or METRIC_LABELS.get(goal.metric_key, goal.metric_key),
+        target_value=goal.target_value,
+        target_date=goal.target_date,
+        is_pinned=goal.is_pinned,
+        notes=goal.notes,
+        created_at=goal.created_at,
+        updated_at=goal.updated_at,
+        current_value=current,
+        progress_pct=progress,
+        status=st,
+        unit=GOAL_UNITS.get(goal.metric_key),
+    )
+
+
+@app.delete("/tenants/{tenant_id}/goals/{goal_id}", status_code=204)
+def delete_tenant_goal(
+    tenant_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    _auth: ExecutiveViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> None:
+    """Delete a goal."""
+    _get_tenant_or_404(db, tenant_id)
+
+    goal = db.scalar(
+        select(TenantGoal).where(
+            TenantGoal.id == goal_id,
+            TenantGoal.tenant_id == tenant_id,
+        )
+    )
+    if goal is None:
+        raise HTTPException(status_code=404, detail="Goal not found.")
+
+    db.delete(goal)
+    db.commit()

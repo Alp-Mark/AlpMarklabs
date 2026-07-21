@@ -112,6 +112,7 @@ class Tenant(Base):
     marketing_channel_spends: Mapped[list[MarketingChannelSpend]] = relationship(
         back_populates="tenant"
     )
+    goals: Mapped[list[TenantGoal]] = relationship(back_populates="tenant")
     executive_kpi_snapshots: Mapped[list[ExecutiveKpiSnapshot]] = relationship(
         back_populates="tenant"
     )
@@ -803,6 +804,34 @@ class MarketingChannelSpend(Base):
     )
 
     tenant: Mapped[Tenant] = relationship(back_populates="marketing_channel_spends")
+
+
+class TenantGoal(Base):
+    """Executive KPI target for a tenant."""
+
+    __tablename__ = "tenant_goals"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    metric_key: Mapped[str] = mapped_column(String(50), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    target_value: Mapped[float] = mapped_column(Float, nullable=False)
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="goals")
 
 
 class ShopifyOrder(Base):
