@@ -7183,7 +7183,11 @@ def get_recommendation_evidence(
     opt_mc = round(hill(opt_ms, params.get("meta",   {})), 1)
     opt_gc = round(hill(opt_gs, params.get("google", {})), 1)
     gain   = round((opt_mc + opt_gc) - (cur_mc + cur_gc), 1)
-    daily_gain_rev = round(gain * aov)
+    daily_gain_rev  = round(gain * aov)
+    monthly_gain_rev = daily_gain_rev * 30
+    cur_ms_mo, opt_ms_mo = round(cur_ms * 30), round(opt_ms * 30)
+    cur_gs_mo, opt_gs_mo = round(cur_gs * 30), round(opt_gs * 30)
+    total_budget_mo = round(total_budget * 30)
 
     # ── PROOF: efficiency trend — first quarter vs last quarter ──────────────
     weekly_rows = db.execute(
@@ -7218,8 +7222,8 @@ def get_recommendation_evidence(
     # ── NBA steps ─────────────────────────────────────────────────────────────
     shift = round(abs(ma.get("spend_change", 0)))
     nba_steps = [
-        f"Open Meta Ads Manager \u2192 Campaigns \u2192 reduce daily budget from \u20b9{cur_ms/100_000:.1f}L to \u20b9{opt_ms/100_000:.1f}L.",
-        f"Open Google Ads \u2192 Budgets \u2192 increase daily budget from \u20b9{cur_gs/100_000:.1f}L to \u20b9{opt_gs/100_000:.1f}L.",
+        f"Open Meta Ads Manager \u2192 Campaigns \u2192 reduce monthly budget from \u20b9{cur_ms_mo/100_000:.1f}L to \u20b9{opt_ms_mo/100_000:.1f}L.",
+        f"Open Google Ads \u2192 Budgets \u2192 increase monthly budget from \u20b9{cur_gs_mo/100_000:.1f}L to \u20b9{opt_gs_mo/100_000:.1f}L.",
         "Takes 5 minutes. No new creative needed. Same total spend.",
     ]
 
@@ -7262,11 +7266,11 @@ def get_recommendation_evidence(
 
         # ── 2. PREDICTION ────────────────────────────────────────────────────
         "prediction": {
-            "headline": f"Shift \u20b9{shift/1000:.0f}K/day from Meta to Google. Same total budget.",
+            "headline": f"Reduce Meta to \u20b9{opt_ms_mo/100_000:.1f}L/month, increase Google to \u20b9{opt_gs_mo/100_000:.1f}L/month. Same total.",
             "before": {
-                "meta_spend":        round(cur_ms),
-                "google_spend":      round(cur_gs),
-                "total_spend":       round(total_budget),
+                "meta_spend":        cur_ms_mo,
+                "google_spend":      cur_gs_mo,
+                "total_spend":       total_budget_mo,
                 "meta_conversions":  cur_mc,
                 "google_conversions":cur_gc,
                 "total_conversions": round(cur_mc + cur_gc, 1),
@@ -7274,9 +7278,9 @@ def get_recommendation_evidence(
                 "google_eff":        cur_ge,
             },
             "after": {
-                "meta_spend":        round(opt_ms),
-                "google_spend":      round(opt_gs),
-                "total_spend":       round(opt_ms + opt_gs),
+                "meta_spend":        opt_ms_mo,
+                "google_spend":      opt_gs_mo,
+                "total_spend":       round(opt_ms_mo + opt_gs_mo),
                 "meta_conversions":  opt_mc,
                 "google_conversions":opt_gc,
                 "total_conversions": round(opt_mc + opt_gc, 1),
@@ -7285,7 +7289,7 @@ def get_recommendation_evidence(
             },
             "gain": {
                 "conversions":  gain,
-                "daily_revenue":daily_gain_rev,
+                "monthly_revenue":monthly_gain_rev,
             },
             "why_it_works": (
                 "Pulling Meta spend back improves its efficiency because you\u2019re moving away"
@@ -7299,24 +7303,23 @@ def get_recommendation_evidence(
 
         # ── 3. NEXT BEST ACTION ───────────────────────────────────────────────
         "nba": {
-            "headline":     f"Move \u20b9{shift/1000:.0f}K/day from Meta to Google",
+            "headline":     f"Move \u20b9{(abs(cur_ms - opt_ms) * 30)/100_000:.1f}L/month from Meta to Google",
             "steps":        nba_steps,
-            "when":         "This week. The sooner you act, the sooner conversions improve.",
+            "when":         "This week. Change both platform budgets in 5 minutes — the monthly budget resets automatically.",
             "review_after": f"Check back in 14 days. If Google efficiency drops below {opt_ge:.2f}\u00d7, pause and reassess.",
             "risk":         "Low risk. You\u2019re not spending more \u2014 just rebalancing between two channels you already use.",
         },
 
         # ── 4. COST OF WAITING ────────────────────────────────────────────────
         "if_no_action": {
-            "headline":     "Every week you wait has a cost.",
-            "daily_cost":   daily_gain_rev,
-            "weekly_cost":  daily_gain_rev * 7,
+            "headline":     "Every month you wait has a cost.",
+            "monthly_cost": monthly_gain_rev,
             "plain_text":   (
-                f"Every day at current allocation, you\u2019re leaving ~\u20b9{daily_gain_rev:,}"
+                f"At current allocation, you are leaving approximately \u20b9{monthly_gain_rev:,} in reachable revenue on the table every month."
                 f" in reachable revenue on the table. That\u2019s \u20b9{daily_gain_rev * 7:,} a week."
             ),
             "projection":   (
-                f"If Meta spend stays at \u20b9{cur_ms/100_000:.1f}L/day, you\u2019ll see"
+                f"If Meta stays at \u20b9{cur_ms_mo/100_000:.1f}L/month, you\u2019ll see"
                 f" noticeable conversion rate pressure within {weeks_to_impact}"
                 f" week{'s' if weeks_to_impact != 1 else ''} as the audience continues to saturate."
             ),
@@ -12978,166 +12981,4 @@ def get_product_variants(
     db: Session = Depends(get_db),  # noqa: B008
     period_start: date = Query(..., description="Start date (YYYY-MM-DD)"),  # noqa: B008
     period_end: date = Query(..., description="End date (YYYY-MM-DD)"),  # noqa: B008
-) -> ProductVariantsResponse:
-    """Get individual product variants (SKUs) with performance metrics.
-
-    Returns all size/color variants of a specific product, showing individual
-    revenue and quantity metrics for each SKU.
-
-    Args:
-        tenant_id: Tenant identifier
-        product_title: Product name to fetch variants for
-        period_start: Start date for analysis (inclusive)
-        period_end: End date for analysis (inclusive)
-
-    Returns:
-        ProductVariantsResponse with variant breakdown and totals
-
-    Raises:
-        404: If tenant not found
-    """
-    _get_tenant_or_404(db, tenant_id)
-
-    return analytics_service.get_product_variants(
-        db=db,
-        tenant_id=tenant_id,
-        product_title=product_title,
-        period_start=period_start,
-        period_end=period_end,
-    )
-
-
-@app.get("/tenants/{tenant_id}/analytics/influencers")
-def get_influencer_performance(
-    tenant_id: uuid.UUID,
-    _auth: ExecutiveViewDep,
-    db: Session = Depends(get_db),  # noqa: B008
-    period_start: date = Query(..., description="Start date (YYYY-MM-DD)"),  # noqa: B008
-    period_end: date = Query(..., description="End date (YYYY-MM-DD)"),  # noqa: B008
-) -> dict[str, Any]:
-    """Individual influencer performance breakdown.
-
-    Returns per-influencer spend, conversions, revenue, ROAS, and CPA
-    for the given date range. Source: marketing_channel_spends where
-    channel_name='influencer', grouped by campaign_name.
-    """
-    _get_tenant_or_404(db, tenant_id)
-
-    rows = db.execute(
-        text("""
-            SELECT
-                campaign_name                          AS influencer,
-                SUM(spend_amount)                      AS total_spend,
-                SUM(conversions)                       AS total_conversions,
-                SUM(revenue)                           AS total_revenue,
-                AVG(spend_amount)                      AS avg_daily_spend,
-                COUNT(DISTINCT spend_date)             AS active_days
-            FROM marketing_channel_spends
-            WHERE tenant_id  = :tid
-              AND channel_name = 'influencer'
-              AND spend_date  >= :start
-              AND spend_date  <= :end
-            GROUP BY campaign_name
-            ORDER BY total_revenue DESC
-        """),
-        {
-            "tid": str(tenant_id),
-            "start": period_start,
-            "end": period_end,
-        },
-    ).fetchall()
-
-    influencers = []
-    for r in rows:
-        spend = float(r.total_spend or 0)
-        revenue = float(r.total_revenue or 0)
-        conversions = float(r.total_conversions or 0)
-        influencers.append({
-            "influencer": r.influencer,
-            "total_spend": round(spend, 2),
-            "total_conversions": int(conversions),
-            "total_revenue": round(revenue, 2),
-            "roas": round(revenue / spend, 2) if spend > 0 else 0.0,
-            "cpa": round(spend / conversions, 2) if conversions > 0 else None,
-            "avg_daily_spend": round(float(r.avg_daily_spend or 0), 2),
-            "active_days": int(r.active_days or 0),
-        })
-
-    total_spend = sum(i["total_spend"] for i in influencers)
-    total_revenue = sum(i["total_revenue"] for i in influencers)
-    total_conv = sum(i["total_conversions"] for i in influencers)
-
-    return {
-        "period_start": str(period_start),
-        "period_end": str(period_end),
-        "influencers": influencers,
-        "totals": {
-            "total_spend": round(total_spend, 2),
-            "total_conversions": total_conv,
-            "total_revenue": round(total_revenue, 2),
-            "blended_roas": round(total_revenue / total_spend, 2)
-            if total_spend > 0 else 0.0,
-        },
-    }
-
-
-@app.get("/tenants/{tenant_id}/analytics/marketing-channels")
-def get_marketing_channel_performance(
-    tenant_id: uuid.UUID,
-    _auth: ExecutiveViewDep,
-    db: Session = Depends(get_db),  # noqa: B008
-    period_start: date = Query(..., description="Start date (YYYY-MM-DD)"),  # noqa: B008
-    period_end: date = Query(..., description="End date (YYYY-MM-DD)"),  # noqa: B008
-) -> dict[str, Any]:
-    """Marketing channel performance summary (influencer, email, affiliate).
-
-    Returns channel-level spend, conversions, revenue, and ROAS.
-    Excludes Meta and Google (handled by the ads analytics endpoints).
-    """
-    _get_tenant_or_404(db, tenant_id)
-
-    rows = db.execute(
-        text("""
-            SELECT
-                channel_name,
-                SUM(spend_amount)        AS total_spend,
-                SUM(conversions)         AS total_conversions,
-                SUM(revenue)             AS total_revenue,
-                COUNT(DISTINCT spend_date) AS active_days
-            FROM marketing_channel_spends
-            WHERE tenant_id   = :tid
-              AND channel_name IN ('influencer', 'email', 'affiliate')
-              AND spend_date  >= :start
-              AND spend_date  <= :end
-            GROUP BY channel_name
-            ORDER BY total_revenue DESC
-        """),
-        {
-            "tid": str(tenant_id),
-            "start": period_start,
-            "end": period_end,
-        },
-    ).fetchall()
-
-    channels = []
-    for r in rows:
-        spend = float(r.total_spend or 0)
-        revenue = float(r.total_revenue or 0)
-        conversions = float(r.total_conversions or 0)
-        channels.append({
-            "channel": r.channel_name,
-            "total_spend": round(spend, 2),
-            "total_conversions": int(conversions),
-            "total_revenue": round(revenue, 2),
-            "roas": round(revenue / spend, 2) if spend > 0 else 0.0,
-            "cpa": round(spend / conversions, 2) if conversions > 0 else None,
-            "active_days": int(r.active_days or 0),
-        })
-
-    return {
-        "period_start": str(period_start),
-        "period_end": str(period_end),
-        "channels": channels,
-    }
-
-
+) ->

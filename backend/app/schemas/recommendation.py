@@ -22,15 +22,20 @@ def _rec_title(rule_id: str, affected_area: str, meta: dict | None) -> str:
         g_eff      = g_alloc.get("current_efficiency", 0)
         shift_to   = "Google" if g_eff > meta_eff else "Meta"
         shift_from = "Meta" if shift_to == "Google" else "Google"
-        # Use absolute spend_change; fall back to computing from current vs optimal
         shift_amt = abs(meta_alloc.get("spend_change", 0) or 0)
         if shift_amt == 0:
             cur = meta_alloc.get("current_spend", 0)
             opt = meta_alloc.get("optimal_spend", 0)
             shift_amt = abs(opt - cur)
-        if shift_amt < 1000:
-            return f"Rebalance Meta and Google ad budget"
-        return f"Shift ₹{shift_amt / 1000:.0f}K/day from {shift_from} to {shift_to}"
+        shift_mo = shift_amt * 30
+        if shift_mo < 30_000:
+            return "Rebalance Meta and Google ad budget"
+        if shift_mo >= 100_000:
+            return (
+                f"Shift \u20b9{shift_mo / 100_000:.1f}L/month"
+                f" from {shift_from} to {shift_to}"
+            )
+        return f"Shift \u20b9{shift_mo / 1000:.0f}K/month from {shift_from} to {shift_to}"
 
     if rule_id == "OPT-MULTICHANNEL-001" and meta:
         channels = meta.get("channels", [])
@@ -58,7 +63,16 @@ def _rec_title(rule_id: str, affected_area: str, meta: dict | None) -> str:
         saturated = meta.get("saturated", False)
         knee = meta.get("knee_spend", 0)
         if saturated and knee:
-            return f"Cap {channel} spend. Diminishing returns past \u20b9{knee / 1000:.0f}K/day"
+            knee_mo = knee * 30
+            if knee_mo >= 100_000:
+                return (
+                    f"Cap {channel} at \u20b9{knee_mo / 100_000:.1f}L/month."
+                    f" Diminishing returns above this."
+                )
+            return (
+                f"Cap {channel} at \u20b9{knee_mo / 1000:.0f}K/month."
+                f" Diminishing returns above this."
+            )
         return f"{channel} only. Consider testing a second ad channel"
 
     # Humanise rule_id (e.g. RET-REPEAT-001 → "Repeat Purchase Rate")
@@ -322,18 +336,4 @@ class RecommendationDetailResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    recommendation: RecommendationResponse
-    simulations: list[dict] = Field(
-        default_factory=list,
-        description="All simulations spawned from this recommendation",
-    )
-    simulation_count: int = Field(
-        default=0, description="Total number of simulations"
-    )
-
-
-class RecommendationStatusUpdateRequest(BaseModel):
-    """FR-073 / T-059: Body for PATCH status endpoint."""
-
-    to_status: str
-    note: str | None = None
+    recom
