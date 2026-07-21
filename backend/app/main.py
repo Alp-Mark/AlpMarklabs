@@ -6856,7 +6856,245 @@ def get_recommendation_evidence(
         )
     )
     if rec is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recommendation not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recommendation not found.",
+        )
+
+    # ── Multi-channel evidence (OPT-MULTICHANNEL-001) ─────────────────────────
+    if rec.rule_id == "OPT-MULTICHANNEL-001":
+        mc_meta = rec.optimization_metadata or {}
+        mc_channels: list[dict] = mc_meta.get("channels", [])
+        mc_conf_pct = round((rec.confidence_score or 0) * 100)
+        mc_lift     = mc_meta.get("lift_pct", 0)
+        mc_rev      = mc_meta.get("daily_revenue_impact", 0)
+        mc_cur_conv = mc_meta.get("current_conversions", 0)
+        mc_exp_conv = mc_meta.get("expected_conversions", 0)
+        mc_budget   = mc_meta.get("total_budget", 0)
+
+        sorted_ch   = sorted(
+            mc_channels, key=lambda c: c.get("spend_change", 0)
+        )
+        increase_ch = [
+            c for c in reversed(sorted_ch)
+            if c.get("spend_change", 0) > 500
+        ]
+        reduce_ch   = [
+            c for c in sorted_ch
+            if c.get("spend_change", 0) < -500
+        ]
+
+        channel_proof = [
+            {
+                "channel":            c["name"].replace("_", " ").title(),
+                "current_spend":      round(c.get("current_spend", 0)),
+                "optimal_spend":      round(c.get("optimal_spend", 0)),
+                "spend_change":       round(c.get("spend_change", 0)),
+                "spend_change_pct":   round(c.get("spend_change_pct", 0), 1),
+                "current_efficiency": round(c.get("current_efficiency", 0), 3),
+                "optimal_efficiency": round(c.get("optimal_efficiency", 0), 3),
+                "current_roas":       round(c.get("current_roas", 0), 2),
+                "direction": (
+                    "increase" if c.get("spend_change", 0) > 0
+                    else "decrease" if c.get("spend_change", 0) < 0
+                    else "hold"
+                ),
+            }
+            for c in mc_channels
+        ]
+
+        nba_steps: list[str] = []
+        for c in increase_ch[:2]:
+            nba_steps.append(
+                f"Increase {c['name'].replace('_', ' ').title()} from "
+                f"\u20b9{c['current_spend']:,.0f} to"
+                f" \u20b9{c['optimal_spend']:,.0f}/day"
+                f" (+{c.get('spend_change_pct', 0):.0f}%)."
+            )
+        for c in reduce_ch[:2]:
+            nba_steps.append(
+                f"Reduce {c['name'].replace('_', ' ').title()} from "
+                f"\u20b9{c['current_spend']:,.0f} to"
+                f" \u20b9{c['optimal_spend']:,.0f}/day"
+                f" ({c.get('spend_change_pct', 0):.0f}%)."
+            )
+        nba_steps.append(
+            "Implement across platforms over 2 to 3 days. Total budget is unchanged."
+        )
+
+        return {
+            "recommendation_id": str(recommendation_id),
+            "proof": {
+                "headline": (
+                    "Some channels are saturating while others have room to grow."
+                ),
+                "channels": channel_proof,
+                "summary": (
+                    f"Across {len(mc_channels)} channels, reallocation can add "
+                    f"+{mc_lift:.1f}% conversions without changing total spend."
+                ),
+            },
+            "prediction": {
+                "headline": (
+                    f"Rebalance \u20b9{mc_budget:,.0f}/day across "
+                    f"{len(mc_channels)} channels."
+                ),
+                "before": {
+                    "total_spend": round(mc_budget),
+                    "total_conversions": round(mc_cur_conv, 1),
+                },
+                "after": {
+                    "total_spend": round(mc_budget),
+                    "total_conversions": round(mc_exp_conv, 1),
+                },
+                "gain": {
+                    "conversions": round(mc_exp_conv - mc_cur_conv, 1),
+                    "daily_revenue": round(mc_rev),
+                },
+                "confidence_pct": mc_conf_pct,
+            },
+            "nba": {
+                "headline": f"Shift budget across {len(mc_channels)} channels",
+                "steps": nba_steps,
+                "when": "This week. Implement channel by channel over 2 to 3 days.",
+                "risk": (
+                    "Low. Total budget is unchanged. "
+                    "You are just moving spend between channels."
+                ),
+            },
+            "if_no_action": {
+                "headline": "Every week you wait has a cost.",
+                "daily_cost": round(mc_rev),
+                "weekly_cost": round(mc_rev * 7),
+                "plain_text": (
+                    f"Every day at current allocation, you are leaving "
+                    f"\u20b9{mc_rev:,.0f} in reachable revenue on the table. "
+                    f"That is \u20b9{mc_rev * 7:,.0f} a week."
+                ),
+            },
+        }
+
+    # ── Single-channel saturation evidence (OPT-SATURATION-*) ────────────────
+    if rec.rule_id.startswith("OPT-SATURATION-"):
+        sc_meta        = rec.optimization_metadata or {}
+        sc_channel     = sc_meta.get("channel", "").title()
+        sc_saturated   = sc_meta.get("saturated", False)
+        sc_knee        = sc_meta.get("knee_spend", 0)
+        sc_cur_spend   = sc_meta.get("current_spend", 0)
+        sc_eff_change  = sc_meta.get("efficiency_change_pct", 0)
+        sc_wasted      = sc_meta.get("wasted_daily_revenue", 0)
+        sc_conf_pct    = round((rec.confidence_score or 0) * 100)
+        sc_sat_pct     = sc_meta.get("saturation_pct", 0)
+        sc_other       = "Google" if sc_channel.lower() == "meta" else "Meta"
+
+        if sc_saturated:
+            return {
+                "recommendation_id": str(recommendation_id),
+                "proof": {
+                    "headline": (
+                        f"{sc_channel} is spending past its efficient range."
+                    ),
+                    "current_spend":       round(sc_cur_spend),
+                    "knee_spend":          round(sc_knee),
+                    "efficiency_change_pct": sc_eff_change,
+                    "saturation_pct":      sc_sat_pct,
+                    "summary": (
+                        f"Your {sc_channel} spend of"
+                        f" \u20b9{sc_cur_spend:,.0f}/day is "
+                        f"{sc_sat_pct}% past the saturation point"
+                        f" (\u20b9{sc_knee:,.0f}/day). "
+                        f"Efficiency has dropped"
+                        f" {abs(sc_eff_change):.0f}% over the period."
+                    ),
+                },
+                "prediction": {
+                    "headline": (
+                        f"Cap {sc_channel} at \u20b9{sc_knee:,.0f}/day."
+                    ),
+                    "wasted_daily":   round(sc_wasted),
+                    "savings_weekly": round(sc_wasted * 7),
+                    "confidence_pct": sc_conf_pct,
+                },
+                "nba": {
+                    "headline": (
+                        f"Reduce {sc_channel} and test a second channel"
+                    ),
+                    "steps": [
+                        f"Cap {sc_channel} spend at \u20b9{sc_knee:,.0f}/day.",
+                        (
+                            f"Reallocate the freed "
+                            f"\u20b9{sc_cur_spend - sc_knee:,.0f}/day "
+                            f"to test {sc_other} or another acquisition channel."
+                        ),
+                        (
+                            "Monitor conversion rates for 14 days before "
+                            "scaling the new channel."
+                        ),
+                    ],
+                    "risk": (
+                        "Low. You are not cutting total budget, "
+                        "just moving past-saturation spend."
+                    ),
+                },
+                "if_no_action": {
+                    "headline": "Saturated spend compounds over time.",
+                    "daily_cost":  round(sc_wasted),
+                    "weekly_cost": round(sc_wasted * 7),
+                    "plain_text": (
+                        f"Each day at current {sc_channel} spend, approximately "
+                        f"\u20b9{sc_wasted:,.0f} is generating diminishing returns. "
+                        f"That is \u20b9{sc_wasted * 7:,.0f} weekly."
+                    ),
+                },
+            }
+        else:
+            return {
+                "recommendation_id": str(recommendation_id),
+                "proof": {
+                    "headline": (
+                        f"{sc_channel} is your only active acquisition channel."
+                    ),
+                    "current_spend":         round(sc_cur_spend),
+                    "efficiency_change_pct": sc_eff_change,
+                    "summary": (
+                        f"You are running on {sc_channel} only. "
+                        f"Spend is \u20b9{sc_cur_spend:,.0f}/day and efficiency "
+                        f"has changed {sc_eff_change:+.0f}% over the period. "
+                        f"Not yet saturating, but single-channel dependency is a risk."
+                    ),
+                },
+                "prediction": {
+                    "headline": (
+                        "Adding a second channel reduces risk and "
+                        "unlocks more growth."
+                    ),
+                    "confidence_pct": sc_conf_pct,
+                },
+                "nba": {
+                    "headline": "Test a second acquisition channel",
+                    "steps": [
+                        f"Keep {sc_channel} spend at current levels.",
+                        (
+                            "Allocate 10 to 15% of total budget to test "
+                            f"a second channel (e.g. {sc_other} or Influencer)."
+                        ),
+                        (
+                            "Evaluate cost per acquisition after 30 days "
+                            "before scaling."
+                        ),
+                    ],
+                    "risk": (
+                        "Low. Start with a small test budget on the new channel."
+                    ),
+                },
+                "if_no_action": {
+                    "headline": "Single-channel dependency increases over time.",
+                    "plain_text": (
+                        f"If {sc_channel} performance declines, you have no "
+                        f"fallback channel. Diversification now protects future growth."
+                    ),
+                },
+            }
 
     meta_opt = rec.optimization_metadata or {}
     lookback  = meta_opt.get("lookback_days", 90)
