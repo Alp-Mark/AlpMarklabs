@@ -17,6 +17,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.types import Uuid
 
 from backend.app.db.base import Base
@@ -427,7 +428,13 @@ class AuditEvent(Base):
     )
     # Activity log filtering fields (Phase 1)
     severity: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="info"
+        postgresql.ENUM(
+            "critical", "important", "info", "debug",
+            name="audit_event_severity",
+            create_type=False,
+        ),
+        nullable=False,
+        default="info",
     )  # critical, important, info, debug
     category: Mapped[str] = mapped_column(
         String(50), nullable=False, default="system"
