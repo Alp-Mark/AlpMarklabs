@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-VALID_METRIC_KEYS = Literal[
+VALID_METRIC_KEYS = {
     "monthly_revenue",
     "daily_orders",
     "monthly_orders",
@@ -18,7 +17,26 @@ VALID_METRIC_KEYS = Literal[
     "cac_payback_days",
     "repeat_purchase_rate_pct",
     "return_rate_pct",
-]
+}
+
+# Map display labels → metric keys (handles what Replit might send)
+_LABEL_TO_KEY: dict[str, str] = {
+    "monthly revenue": "monthly_revenue",
+    "orders / day": "daily_orders",
+    "daily orders": "daily_orders",
+    "orders / month": "monthly_orders",
+    "monthly orders": "monthly_orders",
+    "average order value": "aov",
+    "blended roas": "blended_roas",
+    "contribution margin %": "contribution_margin_pct",
+    "contribution margin": "contribution_margin_pct",
+    "cac payback (days)": "cac_payback_days",
+    "cac payback": "cac_payback_days",
+    "repeat purchase rate %": "repeat_purchase_rate_pct",
+    "repeat purchase rate": "repeat_purchase_rate_pct",
+    "return rate %": "return_rate_pct",
+    "return rate": "return_rate_pct",
+}
 
 METRIC_LABELS: dict[str, str] = {
     "monthly_revenue": "Monthly Revenue",
@@ -33,13 +51,31 @@ METRIC_LABELS: dict[str, str] = {
 }
 
 
+def _normalize_metric_key(v: str) -> str:
+    """Accept snake_case keys or space-separated display labels."""
+    normalized = v.strip().lower().replace(" ", "_")
+    if normalized in VALID_METRIC_KEYS:
+        return normalized
+    # Try label lookup
+    label_match = _LABEL_TO_KEY.get(v.strip().lower())
+    if label_match:
+        return label_match
+    valid = ", ".join(sorted(VALID_METRIC_KEYS))
+    raise ValueError(f"Invalid metric_key '{v}'. Valid values: {valid}")
+
+
 class TenantGoalCreate(BaseModel):
-    metric_key: VALID_METRIC_KEYS
+    metric_key: str
     target_value: float = Field(..., gt=0)
     target_date: date
     label: str | None = Field(default=None, max_length=100)
     notes: str | None = Field(default=None, max_length=500)
     is_pinned: bool = True
+
+    @field_validator("metric_key", mode="before")
+    @classmethod
+    def validate_metric_key(cls, v: str) -> str:
+        return _normalize_metric_key(v)
 
 
 class TenantGoalUpdate(BaseModel):
