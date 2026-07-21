@@ -92,7 +92,7 @@ def _rec_short_description(
         lift = meta.get("lift_pct", 0)
         return (
             f"{len(channels)} channels analysed."
-            f" Rebalancing adds +{lift:.1f}% conversions without changing total budget."
+            f" Rebalancing adds +{lift:.1f}% conversions without changing total monthly budget."
         )
     if rule_id.startswith("OPT-SATURATION-") and meta:
         channel = meta.get("channel", "").title() or rule_id.split("-")[-1].title()
