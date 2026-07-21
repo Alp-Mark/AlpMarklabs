@@ -32,12 +32,33 @@ def _rec_title(rule_id: str, affected_area: str, meta: dict | None) -> str:
             return f"Rebalance Meta and Google ad budget"
         return f"Shift ₹{shift_amt / 1000:.0f}K/day from {shift_from} to {shift_to}"
 
+    if rule_id == "OPT-MULTICHANNEL-001" and meta:
+        channels = meta.get("channels", [])
+        if channels:
+            sorted_ch = sorted(channels, key=lambda c: c.get("spend_change", 0))
+            top_inc = next(
+                (c for c in reversed(sorted_ch) if c.get("spend_change", 0) > 500),
+                None,
+            )
+            top_dec = next(
+                (c for c in sorted_ch if c.get("spend_change", 0) < -500),
+                None,
+            )
+            if top_inc and top_dec:
+                inc = top_inc["name"].replace("_", " ").title()
+                dec = top_dec["name"].replace("_", " ").title()
+                shift = abs(top_dec.get("spend_change", 0))
+                return (
+                    f"Shift \u20b9{shift / 1000:.0f}K/day from {dec} to {inc}"
+                )
+        return "Rebalance influencer, email and affiliate budget"
+
     if rule_id.startswith("OPT-SATURATION-") and meta:
         channel = meta.get("channel", "").title() or rule_id.split("-")[-1].title()
         saturated = meta.get("saturated", False)
         knee = meta.get("knee_spend", 0)
         if saturated and knee:
-            return f"Cap {channel} spend. Diminishing returns past ₹{knee / 1000:.0f}K/day"
+            return f"Cap {channel} spend. Diminishing returns past \u20b9{knee / 1000:.0f}K/day"
         return f"{channel} only. Consider testing a second ad channel"
 
     # Humanise rule_id (e.g. RET-REPEAT-001 → "Repeat Purchase Rate")
@@ -65,6 +86,13 @@ def _rec_short_description(
         return (
             f"{saturating} audiences are saturating."
             f" {growing} can convert that budget better right now."
+        )
+    if rule_id == "OPT-MULTICHANNEL-001" and meta:
+        channels = meta.get("channels", [])
+        lift = meta.get("lift_pct", 0)
+        return (
+            f"{len(channels)} channels analysed."
+            f" Rebalancing adds +{lift:.1f}% conversions without changing total budget."
         )
     if rule_id.startswith("OPT-SATURATION-") and meta:
         channel = meta.get("channel", "").title() or rule_id.split("-")[-1].title()
