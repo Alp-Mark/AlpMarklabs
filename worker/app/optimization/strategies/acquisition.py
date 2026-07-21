@@ -1019,7 +1019,7 @@ class BudgetAllocationOptimizer(BaseOptimizer):
             affected_area=f"{primary_channel} Ads Budget Reallocation",
             signal_summary=signal_summary,
             suggested_action=suggested_action,
-            estimated_impact=daily_revenue_impact,  # Daily revenue impact in currency
+            estimated_impact=daily_revenue_impact * 30,  # Monthly revenue impact
             confidence_level=confidence_level,
             confidence_score=confidence_score,
             data_freshness_context=(

@@ -684,7 +684,7 @@ class MultiChannelAllocator(BaseOptimizer):
             affected_area="Multi-Channel Budget Allocation",
             signal_summary=signal_summary,
             suggested_action=suggested_action,
-            estimated_impact=opt["daily_revenue_impact"],
+            estimated_impact=opt["daily_revenue_impact"] * 30,  # Monthly revenue impact
             confidence_level=confidence_level,
             confidence_score=avg_r2,
             data_freshness_context=(
