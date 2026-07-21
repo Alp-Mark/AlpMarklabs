@@ -12997,3 +12997,137 @@ def get_product_variants(
     )
 
 
+@app.get("/tenants/{tenant_id}/analytics/influencers")
+def get_influencer_performance(
+    tenant_id: uuid.UUID,
+    _auth: ExecutiveViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    period_start: date = Query(..., description="Start date (YYYY-MM-DD)"),  # noqa: B008
+    period_end: date = Query(..., description="End date (YYYY-MM-DD)"),  # noqa: B008
+) -> dict[str, Any]:
+    """Individual influencer performance breakdown.
+
+    Returns per-influencer spend, conversions, revenue, ROAS, and CPA
+    for the given date range. Source: marketing_channel_spends where
+    channel_name='influencer', grouped by campaign_name.
+    """
+    _get_tenant_or_404(db, tenant_id)
+
+    rows = db.execute(
+        text("""
+            SELECT
+                campaign_name                          AS influencer,
+                SUM(spend_amount)                      AS total_spend,
+                SUM(conversions)                       AS total_conversions,
+                SUM(revenue)                           AS total_revenue,
+                AVG(spend_amount)                      AS avg_daily_spend,
+                COUNT(DISTINCT spend_date)             AS active_days
+            FROM marketing_channel_spends
+            WHERE tenant_id  = :tid
+              AND channel_name = 'influencer'
+              AND spend_date  >= :start
+              AND spend_date  <= :end
+            GROUP BY campaign_name
+            ORDER BY total_revenue DESC
+        """),
+        {
+            "tid": str(tenant_id),
+            "start": period_start,
+            "end": period_end,
+        },
+    ).fetchall()
+
+    influencers = []
+    for r in rows:
+        spend = float(r.total_spend or 0)
+        revenue = float(r.total_revenue or 0)
+        conversions = float(r.total_conversions or 0)
+        influencers.append({
+            "influencer": r.influencer,
+            "total_spend": round(spend, 2),
+            "total_conversions": int(conversions),
+            "total_revenue": round(revenue, 2),
+            "roas": round(revenue / spend, 2) if spend > 0 else 0.0,
+            "cpa": round(spend / conversions, 2) if conversions > 0 else None,
+            "avg_daily_spend": round(float(r.avg_daily_spend or 0), 2),
+            "active_days": int(r.active_days or 0),
+        })
+
+    total_spend = sum(i["total_spend"] for i in influencers)
+    total_revenue = sum(i["total_revenue"] for i in influencers)
+    total_conv = sum(i["total_conversions"] for i in influencers)
+
+    return {
+        "period_start": str(period_start),
+        "period_end": str(period_end),
+        "influencers": influencers,
+        "totals": {
+            "total_spend": round(total_spend, 2),
+            "total_conversions": total_conv,
+            "total_revenue": round(total_revenue, 2),
+            "blended_roas": round(total_revenue / total_spend, 2)
+            if total_spend > 0 else 0.0,
+        },
+    }
+
+
+@app.get("/tenants/{tenant_id}/analytics/marketing-channels")
+def get_marketing_channel_performance(
+    tenant_id: uuid.UUID,
+    _auth: ExecutiveViewDep,
+    db: Session = Depends(get_db),  # noqa: B008
+    period_start: date = Query(..., description="Start date (YYYY-MM-DD)"),  # noqa: B008
+    period_end: date = Query(..., description="End date (YYYY-MM-DD)"),  # noqa: B008
+) -> dict[str, Any]:
+    """Marketing channel performance summary (influencer, email, affiliate).
+
+    Returns channel-level spend, conversions, revenue, and ROAS.
+    Excludes Meta and Google (handled by the ads analytics endpoints).
+    """
+    _get_tenant_or_404(db, tenant_id)
+
+    rows = db.execute(
+        text("""
+            SELECT
+                channel_name,
+                SUM(spend_amount)        AS total_spend,
+                SUM(conversions)         AS total_conversions,
+                SUM(revenue)             AS total_revenue,
+                COUNT(DISTINCT spend_date) AS active_days
+            FROM marketing_channel_spends
+            WHERE tenant_id   = :tid
+              AND channel_name IN ('influencer', 'email', 'affiliate')
+              AND spend_date  >= :start
+              AND spend_date  <= :end
+            GROUP BY channel_name
+            ORDER BY total_revenue DESC
+        """),
+        {
+            "tid": str(tenant_id),
+            "start": period_start,
+            "end": period_end,
+        },
+    ).fetchall()
+
+    channels = []
+    for r in rows:
+        spend = float(r.total_spend or 0)
+        revenue = float(r.total_revenue or 0)
+        conversions = float(r.total_conversions or 0)
+        channels.append({
+            "channel": r.channel_name,
+            "total_spend": round(spend, 2),
+            "total_conversions": int(conversions),
+            "total_revenue": round(revenue, 2),
+            "roas": round(revenue / spend, 2) if spend > 0 else 0.0,
+            "cpa": round(spend / conversions, 2) if conversions > 0 else None,
+            "active_days": int(r.active_days or 0),
+        })
+
+    return {
+        "period_start": str(period_start),
+        "period_end": str(period_end),
+        "channels": channels,
+    }
+
+

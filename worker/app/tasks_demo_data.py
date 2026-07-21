@@ -209,6 +209,11 @@ def run_demo_data_generation():
         if ops_updated:
             summary["snapshots_updated"].append("operational_impact")
         
+        # === 5. Update marketing channel spends (influencer, email, affiliate) ===
+        mcs_updated = _update_marketing_channel_spends(db, today)
+        if mcs_updated:
+            summary["snapshots_updated"].append("marketing_channels")
+        
         db.commit()
         
         print(f"✅ Demo data generated: {summary}")
@@ -625,6 +630,109 @@ def _update_inventory_snapshots(db) -> bool:
                 "now": datetime.now(UTC),
             })
     
+    return True
+
+
+def _update_marketing_channel_spends(db, today) -> bool:
+    """Generate daily spend/conversions for influencer, email, affiliate channels.
+
+    Runs every 3 hours but only inserts one record per channel-campaign per day
+    (idempotent). Uses realistic seasonality and baseline patterns aligned with
+    the existing seeded data.
+    """
+    season_mult = get_seasonality_multiplier(datetime(today.year, today.month, today.day))
+    weekend_mult = get_weekend_multiplier(datetime(today.year, today.month, today.day))
+
+    # Influencer campaigns — 10 named creators with individual budgets
+    INFLUENCERS = [
+        ("Vikram Malhotra (Personal Training/Hiit)",  6000.0, 3.0),
+        ("Meera Patel (Athleisure/Lifestyle)",         4800.0, 2.5),
+        ("Aditya Verma (Sports Nutrition)",            4500.0, 2.4),
+        ("Anjali Rao (Lifestyle Fitness)",             1500.0, 1.8),
+        ("Shreya Iyer (Weight Loss)",                  1300.0, 1.7),
+        ("Kabir Singh (Cricket Training)",             1200.0, 1.7),
+        ("Rohan Kapoor (Gym/Strength)",                 900.0, 1.5),
+        ("Neha Sharma (Yoga)",                          410.0, 1.3),
+        ("Arjun Desai (Running)",                       400.0, 1.3),
+        ("Priya Mehta (Fitness)",                       355.0, 1.2),
+    ]
+
+    # Email campaigns
+    EMAIL_CAMPAIGNS = [
+        ("Welcome Series",    2500.0, 12.0),  # high ROAS (owned channel)
+        ("Weekly Newsletter", 1800.0, 9.0),
+        ("Abandoned Cart",    1400.0, 11.0),
+        ("Re-engagement",      800.0, 6.0),
+    ]
+
+    # Affiliate campaigns
+    AFFILIATE_CAMPAIGNS = [
+        ("Sports Affiliate Network", 9000.0, 3.0),
+        ("Fitness Bloggers",         7000.0, 2.8),
+        ("Coupon Sites",             5500.0, 2.5),
+    ]
+
+    connector_id = db.scalar(text("""
+        SELECT id FROM connector_integrations WHERE tenant_id = :tid LIMIT 1
+    """), {"tid": ONE8_TENANT_ID})
+
+    if not connector_id:
+        return False
+
+    def upsert_channel_spend(channel_name, campaign_name, base_spend, roas):
+        """Insert a row only if one doesn't exist for this campaign+date."""
+        exists = db.scalar(text("""
+            SELECT 1 FROM marketing_channel_spends
+            WHERE tenant_id = :tid
+              AND channel_name = :ch
+              AND campaign_name = :camp
+              AND spend_date = :dt
+        """), {"tid": ONE8_TENANT_ID, "ch": channel_name,
+               "camp": campaign_name, "dt": today})
+        if exists:
+            return
+
+        variance = random.uniform(0.88, 1.12)
+        spend = round(base_spend * season_mult * weekend_mult * variance, 2)
+        # conversions: spend × ROAS / AOV (approx, using AOV=5500)
+        conversions = max(0, round((spend * roas) / 5500 * random.uniform(0.85, 1.15)))
+        revenue = round(conversions * 5500 * random.uniform(0.95, 1.05), 2)
+
+        db.execute(text("""
+            INSERT INTO marketing_channel_spends
+              (id, tenant_id, connector_id, channel_name, external_campaign_id,
+               campaign_name, spend_date, currency, spend_amount,
+               impressions, clicks, conversions, revenue,
+               synced_at, created_at, updated_at)
+            VALUES
+              (:id, :tid, :cid, :ch, :ext_id,
+               :camp, :dt, 'INR', :spend,
+               :imp, :clicks, :conv, :rev,
+               NOW(), NOW(), NOW())
+        """), {
+            "id": str(uuid.uuid4()),
+            "tid": ONE8_TENANT_ID,
+            "cid": str(connector_id),
+            "ch": channel_name,
+            "ext_id": f"{channel_name}_{campaign_name[:20].replace(' ', '_')}_{today}",
+            "camp": campaign_name,
+            "dt": today,
+            "spend": spend,
+            "imp": int(spend * random.uniform(8, 15)),
+            "clicks": int(spend * random.uniform(0.03, 0.08)),
+            "conv": conversions,
+            "rev": revenue,
+        })
+
+    for camp, base_spend, roas in INFLUENCERS:
+        upsert_channel_spend("influencer", camp, base_spend, roas)
+
+    for camp, base_spend, roas in EMAIL_CAMPAIGNS:
+        upsert_channel_spend("email", camp, base_spend, roas)
+
+    for camp, base_spend, roas in AFFILIATE_CAMPAIGNS:
+        upsert_channel_spend("affiliate", camp, base_spend, roas)
+
     return True
 
 
