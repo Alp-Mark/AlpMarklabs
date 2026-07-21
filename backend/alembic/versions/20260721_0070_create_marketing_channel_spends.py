@@ -20,6 +20,19 @@ depends_on = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+
+    # Check if table already exists (idempotent)
+    table_exists = conn.execute(
+        sa.text(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_name = 'marketing_channel_spends'"
+        )
+    ).fetchone()
+
+    if table_exists:
+        return
+
     op.create_table(
         "marketing_channel_spends",
         sa.Column("id", sa.Uuid(), nullable=False),
