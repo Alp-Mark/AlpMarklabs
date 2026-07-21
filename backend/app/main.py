@@ -6884,12 +6884,17 @@ def get_recommendation_evidence(
             if c.get("spend_change", 0) < -500
         ]
 
+        # Convert daily → monthly for planning-cycle framing
+        # Influencer/email/affiliate are monthly budget decisions, not daily
+        mc_budget_mo = round(mc_budget * 30)
+        mc_rev_mo    = round(mc_rev * 30)
+
         channel_proof = [
             {
                 "channel":            c["name"].replace("_", " ").title(),
-                "current_spend":      round(c.get("current_spend", 0)),
-                "optimal_spend":      round(c.get("optimal_spend", 0)),
-                "spend_change":       round(c.get("spend_change", 0)),
+                "current_spend":      round(c.get("current_spend", 0) * 30),
+                "optimal_spend":      round(c.get("optimal_spend", 0) * 30),
+                "spend_change":       round(c.get("spend_change", 0) * 30),
                 "spend_change_pct":   round(c.get("spend_change_pct", 0), 1),
                 "current_efficiency": round(c.get("current_efficiency", 0), 3),
                 "optimal_efficiency": round(c.get("optimal_efficiency", 0), 3),
@@ -6906,20 +6911,21 @@ def get_recommendation_evidence(
         nba_steps: list[str] = []
         for c in increase_ch[:2]:
             nba_steps.append(
-                f"Increase {c['name'].replace('_', ' ').title()} from "
-                f"\u20b9{c['current_spend']:,.0f} to"
-                f" \u20b9{c['optimal_spend']:,.0f}/day"
+                f"Increase {c['name'].replace('_', ' ').title()} monthly budget"
+                f" from \u20b9{c['current_spend'] * 30:,.0f}"
+                f" to \u20b9{c['optimal_spend'] * 30:,.0f}"
                 f" (+{c.get('spend_change_pct', 0):.0f}%)."
             )
         for c in reduce_ch[:2]:
             nba_steps.append(
-                f"Reduce {c['name'].replace('_', ' ').title()} from "
-                f"\u20b9{c['current_spend']:,.0f} to"
-                f" \u20b9{c['optimal_spend']:,.0f}/day"
+                f"Reduce {c['name'].replace('_', ' ').title()} monthly budget"
+                f" from \u20b9{c['current_spend'] * 30:,.0f}"
+                f" to \u20b9{c['optimal_spend'] * 30:,.0f}"
                 f" ({c.get('spend_change_pct', 0):.0f}%)."
             )
         nba_steps.append(
-            "Implement across platforms over 2 to 3 days. Total budget is unchanged."
+            "Apply at the start of your next monthly planning cycle."
+            " Total budget stays the same."
         )
 
         return {
@@ -6930,46 +6936,50 @@ def get_recommendation_evidence(
                 ),
                 "channels": channel_proof,
                 "summary": (
-                    f"Across {len(mc_channels)} channels, reallocation can add "
-                    f"+{mc_lift:.1f}% conversions without changing total spend."
+                    f"Across {len(mc_channels)} channels, rebalancing can add "
+                    f"+{mc_lift:.1f}% conversions without changing total monthly spend."
                 ),
             },
             "prediction": {
                 "headline": (
-                    f"Rebalance \u20b9{mc_budget:,.0f}/day across "
-                    f"{len(mc_channels)} channels."
+                    f"Rebalance \u20b9{mc_budget_mo:,.0f}/month across "
+                    f"{len(mc_channels)} channels next cycle."
                 ),
                 "before": {
-                    "total_spend": round(mc_budget),
-                    "total_conversions": round(mc_cur_conv, 1),
+                    "total_spend": mc_budget_mo,
+                    "total_conversions": round(mc_cur_conv * 30, 0),
                 },
                 "after": {
-                    "total_spend": round(mc_budget),
-                    "total_conversions": round(mc_exp_conv, 1),
+                    "total_spend": mc_budget_mo,
+                    "total_conversions": round(mc_exp_conv * 30, 0),
                 },
                 "gain": {
-                    "conversions": round(mc_exp_conv - mc_cur_conv, 1),
-                    "daily_revenue": round(mc_rev),
+                    "conversions": round((mc_exp_conv - mc_cur_conv) * 30, 0),
+                    "monthly_revenue": mc_rev_mo,
                 },
                 "confidence_pct": mc_conf_pct,
             },
             "nba": {
-                "headline": f"Shift budget across {len(mc_channels)} channels",
+                "headline": (
+                    f"Shift monthly budget across {len(mc_channels)} channels"
+                ),
                 "steps": nba_steps,
-                "when": "This week. Implement channel by channel over 2 to 3 days.",
+                "when": (
+                    "Apply at your next monthly budget planning session."
+                    " No mid-campaign disruption needed."
+                ),
                 "risk": (
-                    "Low. Total budget is unchanged. "
-                    "You are just moving spend between channels."
+                    "Low. Total monthly budget is unchanged. "
+                    "You are reallocating at the planning cycle, not mid-campaign."
                 ),
             },
             "if_no_action": {
-                "headline": "Every week you wait has a cost.",
-                "daily_cost": round(mc_rev),
-                "weekly_cost": round(mc_rev * 7),
+                "headline": "Every month you wait has a cost.",
+                "monthly_cost": mc_rev_mo,
                 "plain_text": (
-                    f"Every day at current allocation, you are leaving "
-                    f"\u20b9{mc_rev:,.0f} in reachable revenue on the table. "
-                    f"That is \u20b9{mc_rev * 7:,.0f} a week."
+                    f"At current allocation, you are leaving approximately "
+                    f"\u20b9{mc_rev_mo:,.0f}/month in reachable revenue on the"
+                    f" table by under-investing in higher-performing channels."
                 ),
             },
         }

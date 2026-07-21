@@ -47,9 +47,9 @@ def _rec_title(rule_id: str, affected_area: str, meta: dict | None) -> str:
             if top_inc and top_dec:
                 inc = top_inc["name"].replace("_", " ").title()
                 dec = top_dec["name"].replace("_", " ").title()
-                shift = abs(top_dec.get("spend_change", 0))
+                shift = abs(top_dec.get("spend_change", 0)) * 30
                 return (
-                    f"Shift \u20b9{shift / 1000:.0f}K/day from {dec} to {inc}"
+                    f"Shift \u20b9{shift / 1000:.0f}K/month from {dec} to {inc}"
                 )
         return "Rebalance influencer, email and affiliate budget"
 
