@@ -336,4 +336,18 @@ class RecommendationDetailResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    recom
+    recommendation: RecommendationResponse
+    simulations: list[dict] = Field(
+        default_factory=list,
+        description="All simulations spawned from this recommendation",
+    )
+    simulation_count: int = Field(
+        default=0, description="Total number of simulations"
+    )
+
+
+class RecommendationStatusUpdateRequest(BaseModel):
+    """FR-073 / T-059: Body for PATCH status endpoint."""
+
+    to_status: str
+    note: str | None = None
