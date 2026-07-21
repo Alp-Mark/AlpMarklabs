@@ -13173,39 +13173,81 @@ def _goal_current_value(
     tenant_id: uuid.UUID,
     db: Session,
 ) -> float | None:
-    """Resolve latest value for a metric from existing KPI snapshots."""
-    snap = db.execute(
-        text("""
-            SELECT revenue_amount, orders_count, aov, roas,
-                   contribution_margin_pct, cac_payback_days,
-                   repeat_purchase_rate, return_rate
-            FROM executive_kpi_snapshots
-            WHERE tenant_id = :tid
-            ORDER BY snapshot_date DESC
-            LIMIT 1
-        """),
-        {"tid": str(tenant_id)},
-    ).fetchone()
+    """Resolve latest value for a metric from existing snapshot tables."""
+    tid = str(tenant_id)
 
-    if snap is None:
-        return None
+    # Revenue + ROAS + contribution margin from executive_kpi_snapshots
+    if metric_key in ("monthly_revenue", "blended_roas", "contribution_margin_pct"):
+        row = db.execute(
+            text("""
+                SELECT revenue_amount, blended_roas, contribution_margin_pct
+                FROM executive_kpi_snapshots
+                WHERE tenant_id = :tid
+                ORDER BY snapshot_date DESC LIMIT 1
+            """),
+            {"tid": tid},
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "monthly_revenue": row.revenue_amount,
+            "blended_roas": row.blended_roas,
+            "contribution_margin_pct": row.contribution_margin_pct,
+        }.get(metric_key)
 
-    mapping = {
-        "monthly_revenue": snap.revenue_amount,
-        "monthly_orders": snap.orders_count,
-        "aov": snap.aov,
-        "blended_roas": snap.roas,
-        "contribution_margin_pct": snap.contribution_margin_pct,
-        "cac_payback_days": snap.cac_payback_days,
-        "repeat_purchase_rate_pct": snap.repeat_purchase_rate,
-        "return_rate_pct": snap.return_rate,
-    }
+    # CAC from acquisition_metrics_snapshots (blended across channels)
+    if metric_key == "cac_payback_days":
+        row = db.execute(
+            text("""
+                SELECT AVG(cac) AS avg_cac
+                FROM acquisition_metrics_snapshots
+                WHERE tenant_id = :tid
+                ORDER BY snapshot_date DESC LIMIT 10
+            """),
+            {"tid": tid},
+        ).fetchone()
+        return round(float(row.avg_cac), 1) if row and row.avg_cac else None
 
-    if metric_key == "daily_orders":
-        monthly = mapping.get("monthly_orders")
-        return round(monthly / 30, 1) if monthly else None
+    # Repeat purchase rate from retention_daily_snapshots
+    if metric_key == "repeat_purchase_rate_pct":
+        row = db.execute(
+            text("""
+                SELECT repeat_purchase_rate_pct
+                FROM retention_daily_snapshots
+                WHERE tenant_id = :tid
+                ORDER BY snapshot_date DESC LIMIT 1
+            """),
+            {"tid": tid},
+        ).fetchone()
+        return float(row.repeat_purchase_rate_pct) if row else None
 
-    return mapping.get(metric_key)
+    # Orders and AOV from shopify_orders (last 30 days)
+    if metric_key in ("monthly_orders", "daily_orders", "aov", "return_rate_pct"):
+        row = db.execute(
+            text("""
+                SELECT
+                    COUNT(*) FILTER (WHERE NOT is_refunded)      AS orders,
+                    AVG(total_amount) FILTER (WHERE NOT is_refunded) AS aov,
+                    100.0 * COUNT(*) FILTER (WHERE is_refunded)
+                        / NULLIF(COUNT(*), 0)                    AS return_rate
+                FROM shopify_orders
+                WHERE tenant_id = :tid
+                  AND order_created_at >= NOW() - INTERVAL '30 days'
+            """),
+            {"tid": tid},
+        ).fetchone()
+        if row is None:
+            return None
+        if metric_key == "monthly_orders":
+            return float(row.orders or 0)
+        if metric_key == "daily_orders":
+            return round(float(row.orders or 0) / 30, 1)
+        if metric_key == "aov":
+            return round(float(row.aov or 0), 2)
+        if metric_key == "return_rate_pct":
+            return round(float(row.return_rate or 0), 2)
+
+    return None
 
 
 def _goal_status(
