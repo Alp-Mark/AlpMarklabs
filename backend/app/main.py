@@ -418,16 +418,20 @@ app = FastAPI(title="AlpMark Backend", version="0.1.0")
 _DEFAULT_CORS_ORIGINS = (
     "http://localhost:3000,"
     "http://localhost:3001,"
-    "https://alpmark-labs-dev.replit.app"
+    "https://alpmark-labs-dev.replit.app,"
+    "https://alpmark-intelligence.replit.app"
 )
 _CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOW_ORIGINS", _DEFAULT_CORS_ORIGINS).split(",")
     if origin.strip()
 ]
+# Allow all *.replit.dev preview URLs (Replit assigns unique subdomains per session)
+_CORS_ORIGIN_REGEX = r"https://.*\.replit\.dev"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
+    allow_origin_regex=_CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
