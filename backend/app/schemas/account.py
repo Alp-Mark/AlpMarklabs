@@ -22,8 +22,18 @@ class UserResponse(BaseModel):
     """Response for GET /users/me endpoint."""
 
     email: str
+    full_name: str | None = None
     platform_role: str | None = None
     tenant_id: str | None = None
+    role: str | None = None
+    profile_picture_url: str | None = None
+
+
+class UserProfileUpdate(BaseModel):
+    """Request body for PATCH /users/me."""
+
+    full_name: str | None = Field(default=None, min_length=1, max_length=255)
+    profile_picture_url: str | None = Field(default=None, max_length=500)
 
 
 class LoginRequest(BaseModel):

@@ -3284,6 +3284,80 @@ def test_get_tenant_branding_not_found(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+def test_get_users_me_returns_profile(client: TestClient, db_session: Session) -> None:
+    """GET /users/me returns full_name, role, and profile_picture_url for the logged-in user."""
+    tenant_id = _create_tenant_as_super_admin(
+        client,
+        tenant_name="Profile Co",
+        tenant_slug="profileco",
+        email="admin@profileco.local",
+    )
+    _set_auth_header(client, {"sub": "admin@profileco.local", "email": "admin@profileco.local"})
+
+    # Set profile picture on the user
+    user = db_session.query(User).filter_by(email="admin@profileco.local").one()
+    user.profile_picture_url = "https://example.com/photo.jpg"
+    db_session.commit()
+
+    resp = client.get("/users/me")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["email"] == "admin@profileco.local"
+    assert body["full_name"] is not None
+    assert body["tenant_id"] == tenant_id
+    assert body["profile_picture_url"] == "https://example.com/photo.jpg"
+
+
+def test_patch_users_me_updates_name_and_picture(client: TestClient) -> None:
+    """PATCH /users/me updates full_name and profile_picture_url."""
+    _create_tenant_as_super_admin(
+        client,
+        tenant_name="Patch Profile Co",
+        tenant_slug="patchprofileco",
+        email="admin@patchprofile.local",
+    )
+    _set_auth_header(client, {"sub": "admin@patchprofile.local", "email": "admin@patchprofile.local"})
+
+    resp = client.patch(
+        "/users/me",
+        json={
+            "full_name": "Updated Name",
+            "profile_picture_url": "https://example.com/new.jpg",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["full_name"] == "Updated Name"
+    assert body["profile_picture_url"] == "https://example.com/new.jpg"
+
+    # Confirm persistence via GET
+    get_resp = client.get("/users/me")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["full_name"] == "Updated Name"
+    assert get_resp.json()["profile_picture_url"] == "https://example.com/new.jpg"
+
+
+def test_patch_users_me_partial_update(client: TestClient) -> None:
+    """PATCH /users/me with only full_name doesn't wipe profile_picture_url."""
+    _create_tenant_as_super_admin(
+        client,
+        tenant_name="Partial Patch Co",
+        tenant_slug="partialpatchco",
+        email="admin@partialpatch.local",
+    )
+    _set_auth_header(client, {"sub": "admin@partialpatch.local", "email": "admin@partialpatch.local"})
+
+    # Set picture first
+    client.patch("/users/me", json={"profile_picture_url": "https://example.com/pic.jpg"})
+
+    # Update only name
+    resp = client.patch("/users/me", json={"full_name": "New Name Only"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["full_name"] == "New Name Only"
+    assert body["profile_picture_url"] == "https://example.com/pic.jpg"
+
+
 # ---------------------------------------------------------------------------
 # T-053 Recommendations API tests
 # ---------------------------------------------------------------------------

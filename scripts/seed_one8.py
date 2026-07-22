@@ -78,7 +78,12 @@ TENANT_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 TENANT_NAME = "one8"
 TENANT_SLUG = "one8"
 OWNER_EMAIL = "owner@one8.com"
-OWNER_NAME = "one8 Owner"
+OWNER_NAME = "Virat Kohli"
+# Public profile image used for the demo Executive Owner persona.
+OWNER_PROFILE_PICTURE_URL = (
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9b/"
+    "Virat_Kohli_2019.jpg/440px-Virat_Kohli_2019.jpg"
+)
 
 # Demo password for all seeded users (IMPORTANT: Change in production!)
 DEMO_PASSWORD = "password123"
@@ -1089,10 +1094,13 @@ def seed() -> None:
                 full_name=OWNER_NAME,
                 is_active=True,
                 password_hash=hash_password(DEMO_PASSWORD),
+                profile_picture_url=OWNER_PROFILE_PICTURE_URL,
             )
             db.add(user)
         else:
             user.is_active = True
+            user.full_name = OWNER_NAME
+            user.profile_picture_url = OWNER_PROFILE_PICTURE_URL
             # Update password_hash if it's missing (for existing users)
             if not user.password_hash:
                 user.password_hash = hash_password(DEMO_PASSWORD)

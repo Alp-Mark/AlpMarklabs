@@ -112,6 +112,7 @@ from backend.app.schemas.account import (
     ResetPasswordRequest,
     ResetPasswordResponse,
     SessionListResponse,
+    UserProfileUpdate,
     UserResponse,
     UserSessionResponse,
 )
@@ -1351,28 +1352,72 @@ def get_current_user(
     auth: AuthDep,
     db: Session = Depends(get_db),  # noqa: B008
 ) -> UserResponse:
-    """Get current authenticated user's info."""
-    # Look up the user's tenant membership from database
-    try:
-        user_id = db.scalar(select(User.id).where(User.email == auth.email))
-        if user_id:
-            membership = db.scalar(
-                select(TenantMembership)
-                .where(TenantMembership.user_id == user_id)
-                .order_by(TenantMembership.created_at)
-                .limit(1)
-            )
-            tenant_id = str(membership.tenant_id) if membership else None
-        else:
-            tenant_id = None
-    except Exception:
-        # If database lookup fails, tenant_id remains None
-        tenant_id = None
+    """Get current authenticated user's profile."""
+    user = db.scalar(select(User).where(User.email == auth.email))
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    membership = db.scalar(
+        select(TenantMembership)
+        .where(TenantMembership.user_id == user.id)
+        .order_by(TenantMembership.created_at)
+        .limit(1)
+    )
+    tenant_id = str(membership.tenant_id) if membership else None
+
+    role_name: str | None = None
+    if membership is not None:
+        role = db.scalar(select(Role).where(Role.id == membership.role_id))
+        role_name = role.name if role else None
 
     return UserResponse(
-        email=auth.email,
+        email=user.email,
+        full_name=user.full_name,
         platform_role=auth.platform_role,
         tenant_id=tenant_id,
+        role=role_name,
+        profile_picture_url=user.profile_picture_url,
+    )
+
+
+@app.patch("/users/me", response_model=UserResponse)
+def update_current_user(
+    payload: UserProfileUpdate,
+    auth: AuthDep,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> UserResponse:
+    """Update current authenticated user's profile (name and/or profile picture)."""
+    user = db.scalar(select(User).where(User.email == auth.email))
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if payload.full_name is not None:
+        user.full_name = payload.full_name.strip()
+    if payload.profile_picture_url is not None:
+        user.profile_picture_url = payload.profile_picture_url.strip() or None
+
+    db.commit()
+
+    membership = db.scalar(
+        select(TenantMembership)
+        .where(TenantMembership.user_id == user.id)
+        .order_by(TenantMembership.created_at)
+        .limit(1)
+    )
+    tenant_id = str(membership.tenant_id) if membership else None
+
+    role_name = None
+    if membership is not None:
+        role = db.scalar(select(Role).where(Role.id == membership.role_id))
+        role_name = role.name if role else None
+
+    return UserResponse(
+        email=user.email,
+        full_name=user.full_name,
+        platform_role=auth.platform_role,
+        tenant_id=tenant_id,
+        role=role_name,
+        profile_picture_url=user.profile_picture_url,
     )
 
 
