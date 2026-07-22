@@ -81,8 +81,8 @@ OWNER_EMAIL = "owner@one8.com"
 OWNER_NAME = "Virat Kohli"
 # Public profile image used for the demo Executive Owner persona.
 OWNER_PROFILE_PICTURE_URL = (
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9b/"
-    "Virat_Kohli_2019.jpg/440px-Virat_Kohli_2019.jpg"
+    "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSiW_rj1nDZYDtMmvct3"
+    "L46vFZP8Bre_2FhX0RNAihHRz7g6IABBCbrH-E&s=10"
 )
 
 # Demo password for all seeded users (IMPORTANT: Change in production!)
