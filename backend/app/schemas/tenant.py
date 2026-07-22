@@ -31,3 +31,12 @@ class TenantCreateResponse(BaseModel):
     is_active: bool
     base_currency: str
     created_at: datetime
+
+
+class TenantBrandingResponse(BaseModel):
+    """Public branding information for a tenant (name and logo)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    logo_url: str | None

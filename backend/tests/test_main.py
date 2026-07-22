@@ -18,6 +18,7 @@ from backend.app.db.models import (
     InventoryRiskThreshold,
     MarginDriftThreshold,
     Role,
+    Tenant,
     TenantMembership,
     User,
     UserInvitation,
@@ -3239,6 +3240,48 @@ def test_get_tenant_locale_requires_auth(client: TestClient) -> None:
     )
     resp = client.get(f"/tenants/{tenant_id}/locale")
     assert resp.status_code == 403
+
+
+def test_get_tenant_branding_with_logo(client: TestClient, db_session: Session) -> None:
+    """GET /tenants/{id}/branding returns name and logo_url when logo is set."""
+    tenant_id = _create_tenant_as_super_admin(
+        client,
+        tenant_name="Branded Co",
+        tenant_slug="brandedco",
+        email="admin@brandedco.local",
+    )
+    # Set logo_url for this tenant
+    tenant = db_session.query(Tenant).filter_by(id=uuid.UUID(tenant_id)).one()
+    tenant.logo_url = "https://brandedco.com/logo.png"
+    db_session.commit()
+
+    resp = client.get(f"/tenants/{tenant_id}/branding")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "Branded Co"
+    assert body["logo_url"] == "https://brandedco.com/logo.png"
+
+
+def test_get_tenant_branding_without_logo(client: TestClient) -> None:
+    """GET /tenants/{id}/branding returns null logo_url when not set."""
+    tenant_id = _create_tenant_as_super_admin(
+        client,
+        tenant_name="No Logo Co",
+        tenant_slug="nologoco",
+        email="admin@nologoco.local",
+    )
+    resp = client.get(f"/tenants/{tenant_id}/branding")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "No Logo Co"
+    assert body["logo_url"] is None
+
+
+def test_get_tenant_branding_not_found(client: TestClient) -> None:
+    """GET /tenants/{id}/branding returns 404 when tenant doesn't exist."""
+    fake_id = uuid.uuid4()
+    resp = client.get(f"/tenants/{fake_id}/branding")
+    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------

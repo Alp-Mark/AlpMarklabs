@@ -381,7 +381,11 @@ from backend.app.schemas.suppression import (
     SuppressionStateListResponse,
     SuppressionStateResponse,
 )
-from backend.app.schemas.tenant import TenantCreateRequest, TenantCreateResponse
+from backend.app.schemas.tenant import (
+    TenantBrandingResponse,
+    TenantCreateRequest,
+    TenantCreateResponse,
+)
 from backend.app.schemas.trends import (
     CostDriverTrendResponse,
     ExecutiveTrendResponse,
@@ -2159,6 +2163,16 @@ def deactivate_member(
         role=membership.role,
         is_active=user.is_active,
     )
+
+
+@app.get("/tenants/{tenant_id}/branding", response_model=TenantBrandingResponse)
+def get_tenant_branding(
+    tenant_id: uuid.UUID,
+    db: Session = Depends(get_db),  # noqa: B008
+) -> TenantBrandingResponse:
+    """Get public branding information (name and logo) for a tenant."""
+    tenant = _get_tenant_or_404(db, tenant_id)
+    return TenantBrandingResponse(name=tenant.name, logo_url=tenant.logo_url)
 
 
 @app.get("/tenants/{tenant_id}/billing-seats", response_model=BillingSeatResponse)
