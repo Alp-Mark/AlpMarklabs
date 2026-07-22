@@ -29,6 +29,7 @@ Or, with the Railway CLI linked to the project::
 from __future__ import annotations
 
 import os
+import re
 import sys
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -47,6 +48,7 @@ _public_db_url = os.getenv("DATABASE_PUBLIC_URL")
 if _public_db_url:
     os.environ["DATABASE_URL"] = _public_db_url
 
+import requests  # noqa: E402
 from backend.app.db.models import (  # noqa: E402
     AcquisitionCohort,
     AlertEventLog,
@@ -65,6 +67,7 @@ from backend.app.db.models import (  # noqa: E402
 )
 from backend.app.db.session import SessionLocal  # noqa: E402
 from backend.app.password import hash_password  # noqa: E402
+from backend.app.permissions import get_system_role_permissions  # noqa: E402
 from sqlalchemy import delete, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
@@ -85,6 +88,43 @@ OWNER_ROLE = "executive_owner"
 
 # Historical data window: Generate this many days of history (90-365).
 HISTORY_DAYS = 90
+
+# Live storefront to scrape the brand logo from (demo data only; real
+# tenants will upload their own logo via a future upload endpoint).
+ONE8_STOREFRONT_URL = "https://one8.com"
+
+
+def fetch_one8_logo_url() -> str | None:
+    """Best-effort scrape of one8's brand logo URL from their storefront.
+
+    Looks for the site favicon link (a square, transparent brand mark),
+    which is a better fit for a small sidebar icon than the Open Graph
+    banner image. Returns None if the site is unreachable or no icon is
+    found, so seeding never fails because of a network hiccup.
+    """
+    try:
+        response = requests.get(
+            ONE8_STOREFRONT_URL,
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"   \u26a0\ufe0f  Could not reach {ONE8_STOREFRONT_URL} for logo: {e}")
+        return None
+
+    match = re.search(
+        r'<link[^>]+rel=["\']icon["\'][^>]+href=["\']([^"\']+)["\']',
+        response.text,
+        re.IGNORECASE,
+    )
+    if not match:
+        print("   \u26a0\ufe0f  No favicon/logo tag found on storefront")
+        return None
+
+    logo_url = match.group(1)
+    print(f"   \u2705 Found brand logo: {logo_url}")
+    return logo_url
 
 # Demo currency. one8 is an Indian brand, so the demo uses Indian Rupees with
 # the en-IN locale. ``_USD_TO_INR`` scales the hand-authored USD figures into
@@ -990,6 +1030,7 @@ def seed() -> None:
     db = SessionLocal()
     try:
         # 1) Tenant (create once, refresh demo attributes on re-run).
+        logo_url = fetch_one8_logo_url()
         tenant = db.get(Tenant, TENANT_ID)
         if tenant is None:
             tenant = Tenant(
@@ -998,12 +1039,47 @@ def seed() -> None:
                 slug=TENANT_SLUG,
                 base_currency=CURRENCY,
                 locale=LOCALE,
+                logo_url=logo_url,
             )
             db.add(tenant)
         else:
             tenant.name = TENANT_NAME
             tenant.base_currency = CURRENCY
             tenant.locale = LOCALE
+            if logo_url is not None:
+                tenant.logo_url = logo_url
+
+        # 1b) System roles (mirrors POST /tenants in main.py). The one8 demo
+        # tenant predates migration 0058's role/RBAC system and was created
+        # by inserting a Tenant row directly, so it never got these roles.
+        # Backfill any missing ones; skip roles that already exist so
+        # re-running this script is still safe.
+        system_role_names = [
+            "brand_admin",
+            "executive_owner",
+            "growth_performance_manager",
+            "retention_crm_manager",
+            "finance_controller",
+            "operations_inventory_manager",
+        ]
+        existing_role_names = set(
+            db.scalars(
+                select(Role.name).where(Role.tenant_id == TENANT_ID)
+            ).all()
+        )
+        for role_name in system_role_names:
+            if role_name in existing_role_names:
+                continue
+            db.add(
+                Role(
+                    id=uuid.uuid4(),
+                    tenant_id=TENANT_ID,
+                    name=role_name,
+                    permissions=get_system_role_permissions(role_name),
+                    is_system=True,
+                )
+            )
+        db.flush()
 
         # 2) Owner user (matched by email at login).
         user = db.scalar(select(User).where(User.email == OWNER_EMAIL))
